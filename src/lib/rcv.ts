@@ -8,10 +8,10 @@ export function normalizeRcvDocuments(
 ): RcvDocument[] {
   return rows.map((row, index) => {
     const documentCode = number(row.tipo_doc ?? row.dcvCodigoDoc ?? row.detTipoDoc);
-    const totalAmount = number(row.detMntTotal ?? row.montoTotal);
-    const netAmount = number(row.detMntNeto ?? row.montoNeto);
-    const vatAmount = number(row.detMntIVA ?? row.impuestoIva);
-    const exemptAmount = number(row.detMntExe ?? row.detMntExento ?? row.montoExento);
+    const totalAmount = number(row.detMntTotal ?? row.rsmnMntTotal ?? row.montoTotal);
+    const netAmount = number(row.detMntNeto ?? row.rsmnMntNeto ?? row.montoNeto);
+    const vatAmount = number(row.detMntIVA ?? row.rsmnMntIVA ?? row.impuestoIva);
+    const exemptAmount = number(row.detMntExe ?? row.detMntExento ?? row.rsmnMntExe ?? row.montoExento);
     const rutBody = String(row.detRutDoc ?? row.rutProveedor ?? row.rutCliente ?? "");
     const dv = String(row.detDvDoc ?? "");
     const counterpartyRut = dv && !rutBody.includes("-") ? `${rutBody}-${dv}` : rutBody;
@@ -20,7 +20,7 @@ export function normalizeRcvDocuments(
       companyId: options.companyId,
       period: options.period,
       direction: options.direction,
-      documentType: String(row.tipo_doc_nombre ?? row.dcvNombreTipoDoc ?? `Documento ${documentCode}`),
+      documentType: String(row.tipo_doc_nombre ?? row.dcvNombreTipoDoc ?? row.dcvNombreDoc ?? `Documento ${documentCode}`),
       documentCode,
       folio: String(row.detNroDoc ?? row.numeroDocumento ?? ""),
       counterpartyRut,
@@ -47,4 +47,3 @@ function normalizeSiiDate(value: string) {
   const match = value.match(/(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})/);
   return match ? `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}` : value;
 }
-

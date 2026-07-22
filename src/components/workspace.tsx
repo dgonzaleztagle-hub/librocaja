@@ -802,6 +802,8 @@ function Sources({
   const [showDocuments, setShowDocuments] = useState(false);
   const purchaseDocuments = documents.filter((document) => document.direction === "purchase");
   const saleDocuments = documents.filter((document) => document.direction === "sale");
+  const electronicPayments = saleDocuments.filter((document) => document.documentCode === 48);
+  const electronicPaymentTotal = electronicPayments.reduce((sum, document) => sum + document.totalAmount, 0);
   return (
     <section className="content-stage">
       <div className="stage-title-row">
@@ -826,8 +828,8 @@ function Sources({
           <p>Importa los CSV detallados descargados desde el SII. También puedes extraerlos si la credencial SII está configurada.</p>
           <div className="source-stats">
             <span>
-              <b>{documents.filter((document) => document.direction === "sale").length}</b>
-              <small>Ventas</small>
+              <b>{saleDocuments.length - electronicPayments.length}</b>
+              <small>Ventas DTE</small>
             </span>
             <span>
               <b>{documents.filter((document) => document.direction === "purchase").length}</b>
@@ -838,6 +840,13 @@ function Sources({
               <small>Documentos</small>
             </span>
           </div>
+          {electronicPayments.length > 0 && (
+            <div className="electronic-payment-callout">
+              <span>Código 48 · pagos electrónicos SII</span>
+              <b>{clp.format(electronicPaymentTotal)}</b>
+              <small>Una venta centralizada mensual. No es factura, boleta ni movimiento bancario individual.</small>
+            </div>
+          )}
           <button className="button primary wide" onClick={openRcvImport}>
             <Upload size={16} /> Importar CSV del SII
           </button>
@@ -869,7 +878,7 @@ function Sources({
         <span>
           <b>Origen del libro</b>
           <small>
-            Cada línea se genera desde el detalle RCV del SII: ventas como flujo 1 y compras como flujo 2. La fecha corresponde a la informada en el RCV.
+            Ventas DTE son facturas, boletas y notas del RCV. El código 48 es un único resumen mensual de pagos electrónicos del SII; ambos generan flujo 1. Las compras generan flujo 2.
           </small>
         </span>
       </div>
