@@ -43,7 +43,7 @@ import { clp, formatDate, periodLabel } from "@/lib/format";
 import { parseSiiRcvFile, type SiiRcvFile } from "@/lib/sii-rcv-import";
 import {
   buildLedger,
-  buildRcvLedger,
+  buildCompleteLedger,
   calculateTotals,
   suggestedTaxableAmount,
   validateClose,
@@ -98,7 +98,10 @@ export function Workspace({
   const [periodClosed, setPeriodClosed] = useState(initialClosure.closed);
   const [closureVersion, setClosureVersion] = useState(initialClosure.version);
   const [openingConfirmed, setOpeningConfirmed] = useState(true);
-  const ledger = useMemo(() => buildRcvLedger(company, documents), [company, documents]);
+  const ledger = useMemo(
+    () => buildCompleteLedger(company, documents, movements),
+    [company, documents, movements],
+  );
   const totals = useMemo(() => calculateTotals(ledger), [ledger]);
   const closeValidation = useMemo(
     () =>

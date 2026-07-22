@@ -225,8 +225,8 @@ void exportLegacyExcel;
 export async function exportExcel(
   company: Company,
   period: string,
-  _ledger: LedgerRow[],
-  documents: RcvDocument[],
+  ledger: LedgerRow[],
+  _documents: RcvDocument[],
   version = 1,
   status = "BORRADOR",
 ) {
@@ -237,20 +237,17 @@ export async function exportExcel(
     pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1 },
     views: [{ showGridLines: false }],
   });
-  const records = documents
-    .filter((document) => document.period === period)
-    .sort((a, b) => a.issuedOn.localeCompare(b.issuedOn) || a.folio.localeCompare(b.folio))
-    .map((document, index) => ({
-      correlation: index + 1,
-      operation: document.direction === "sale" ? 1 : 2,
-      folio: document.folio,
-      type: document.documentType,
-      issuerRut: document.direction === "sale" ? company.rut : document.counterpartyRut,
-      issuedOn: document.issuedOn,
-      description: `${document.direction === "sale" ? "Venta" : "Compra"} RCV · ${document.counterpartyName}`,
-      total: document.totalAmount,
-      taxable: document.netAmount,
-    }));
+  const records = ledger.map((row) => ({
+    correlation: row.correlation,
+    operation: row.operationType,
+    folio: row.documentNumber,
+    type: row.documentType,
+    issuerRut: row.issuerRut,
+    issuedOn: row.occurredOn,
+    description: row.description,
+    total: row.flowAmount,
+    taxable: row.taxableAmount,
+  }));
 
   sheet.columns = [2.3, 2.3, 15.8, 17.6, 14.3, 12.8, 12.3, 13, 14.3, 17.8, 19.5, 18, 2.9].map((width) => ({ width }));
   sheet.mergeCells("C2:M2");

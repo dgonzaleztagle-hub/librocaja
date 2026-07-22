@@ -48,6 +48,23 @@ export function buildRcvLedger(company: Company, documents: RcvDocument[]): Ledg
     }));
 }
 
+/** Libro oficial: documentos RCV más movimientos manuales clasificados. */
+export function buildCompleteLedger(
+  company: Company,
+  documents: RcvDocument[],
+  movements: CashMovement[],
+): LedgerRow[] {
+  const rcvRows = buildRcvLedger(company, documents);
+  const manualRows = buildLedger(movements);
+  return [...rcvRows, ...manualRows]
+    .sort((a, b) =>
+      a.occurredOn.localeCompare(b.occurredOn)
+      || a.documentNumber.localeCompare(b.documentNumber)
+      || a.movementId.localeCompare(b.movementId),
+    )
+    .map((row, index) => ({ ...row, correlation: index + 1 }));
+}
+
 declare module "./types" {
   interface CashMovement {
     createdOrder: string;
