@@ -70,6 +70,8 @@ export async function getWorkspace(
         }
       : null;
   }
+  const [year, month] = period.split("-").map(Number);
+  const nextPeriod = `${year + (month === 12 ? 1 : 0)}-${String(month === 12 ? 1 : month + 1).padStart(2, "0")}`;
   const supabase = await createClient();
   const [
     { data: companyRow },
@@ -92,7 +94,8 @@ export async function getWorkspace(
       .from("rcv_documents")
       .select("*")
       .eq("company_id", companyId)
-      .lte("issued_on", `${period}-31`)
+      .gte("issued_on", `${period}-01`)
+      .lt("issued_on", `${nextPeriod}-01`)
       .order("issued_on", { ascending: false })
       .limit(500),
     supabase
