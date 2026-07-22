@@ -1,4 +1,5 @@
 import { createServerClient } from "@supabase/ssr";
+import { createClient as createAdminClient } from "@supabase/supabase-js";
 import { cookies } from "next/headers";
 
 export async function createClient() {
@@ -6,6 +7,12 @@ export async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error("Supabase no está configurado");
+  const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  if (serviceRole)
+    return createAdminClient(url, serviceRole, {
+      auth: { autoRefreshToken: false, persistSession: false },
+      db: { schema: "libro_caja" },
+    });
   return createServerClient(url, key, {
     db: { schema: "libro_caja" },
     cookies: {
@@ -24,6 +31,8 @@ export async function createClient() {
 }
 
 export async function requireUser() {
+  const ownerId = process.env.LIBRO_CAJA_OWNER_ID;
+  if (ownerId) return { id: ownerId, email: "caja-clara@internal.local" };
   if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
     return { id: "demo-user", email: "contador@demo.local" };
   }
