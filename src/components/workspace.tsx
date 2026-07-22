@@ -1,0 +1,1846 @@
+"use client";
+
+import Link from "next/link";
+import { useRouter } from "next/navigation";
+import { useMemo, useRef, useState } from "react";
+import {
+  AlertCircle,
+  ArrowDownLeft,
+  ArrowLeft,
+  ArrowRight,
+  ArrowUpRight,
+  Banknote,
+  CalendarDays,
+  Check,
+  CheckCircle2,
+  ChevronDown,
+  CircleDot,
+  Download,
+  FileCheck2,
+  FileSpreadsheet,
+  KeyRound,
+  Landmark,
+  Link2,
+  LoaderCircle,
+  LockKeyhole,
+  Plus,
+  RefreshCw,
+  Search,
+  ShieldCheck,
+  Sparkles,
+  Upload,
+  WalletCards,
+  X,
+} from "lucide-react";
+import {
+  mapBankRows,
+  readTabularFile,
+  suggestMapping,
+  type ImportMapping,
+  type TabularFile,
+} from "@/lib/bank-import";
+import { exportCsv, exportExcel, exportPdf } from "@/lib/exports";
+import { clp, formatDate, periodLabel } from "@/lib/format";
+import {
+  buildLedger,
+  calculateTotals,
+  suggestedTaxableAmount,
+  validateClose,
+} from "@/lib/ledger";
+import type {
+  CashMovement,
+  Company,
+  MovementCategory,
+  RcvDocument,
+} from "@/lib/types";
+
+const stages = [
+  { id: "sources", label: "Fuentes", caption: "RCV, cartolas y caja", icon: Landmark },
+  { id: "reconcile", label: "Conciliación", caption: "Movimientos y documentos", icon: Link2 },
+  { id: "review", label: "Libro", caption: "Borrador y totales", icon: FileCheck2 },
+  { id: "close", label: "Validación y cierre", caption: "Excepciones y exportación", icon: LockKeyhole },
+] as const;
+type Stage = (typeof stages)[number]["id"];
+
+export function Workspace({
+  company,
+  period,
+  initialMovements,
+  initialDocuments,
+  initialClosure,
+}: {
+  company: Company;
+  period: string;
+  initialMovements: CashMovement[];
+  initialDocuments: RcvDocument[];
+  initialClosure: { closed: boolean; version: number };
+}) {
+  const router = useRouter();
+  const [stage, setStage] = useState<Stage>("reconcile");
+  const [movements, setMovements] = useState<CashMovement[]>(initialMovements);
+  const [documents, setDocuments] = useState<RcvDocument[]>(initialDocuments);
+  const [selectedMovement, setSelectedMovement] = useState<string | null>(
+    movements.find((m) => !m.reconciled)?.id ?? null,
+  );
+  const [selectedDocument, setSelectedDocument] = useState<string | null>(null);
+  const [accountFilter, setAccountFilter] = useState("all");
+  const [movementFilter, setMovementFilter] = useState<
+    "all" | "pending" | "done"
+  >("pending");
+  const [documentQuery, setDocumentQuery] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [manualOpen, setManualOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [syncing, setSyncing] = useState(false);
+  const [syncProgress, setSyncProgress] = useState(100);
+  const [periodClosed, setPeriodClosed] = useState(initialClosure.closed);
+  const [closureVersion, setClosureVersion] = useState(initialClosure.version);
+  const [openingConfirmed, setOpeningConfirmed] = useState(true);
+  const ledger = useMemo(() => buildLedger(movements), [movements]);
+  const totals = useMemo(() => calculateTotals(ledger), [ledger]);
+  const closeValidation = useMemo(
+    () =>
+      validateClose(
+        movements,
+        documents.filter((d) => d.period <= period),
+        openingConfirmed,
+      ),
+    [movements, documents, openingConfirmed, period],
+  );
+  const pendingCount = movements.filter(
+    (movement) => !movement.reconciled && !movement.excluded,
+  ).length;
+
+  async function syncRcv() {
+    setSyncing(true);
+    setSyncProgress(12);
+    if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      try {
+        const response = await fetch("/api/rcv/sync", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ companyId: company.id, period }),
+        });
+        if (!response.ok) throw new Error("sync failed");
+        const { job_id: jobId } = await response.json();
+        for (let attempt = 0; attempt < 180; attempt += 1) {
+          await new Promise((resolve) => window.setTimeout(resolve, 1000));
+          const statusResponse = await fetch(
+            `/api/rcv/jobs/${jobId}?companyId=${company.id}`,
+            { cache: "no-store" },
+          );
+          const job = await statusResponse.json();
+          setSyncProgress(Number(job.progress ?? 0));
+          if (job.status === "succeeded") {
+            setSyncing(false);
+            router.refresh();
+            return;
+          }
+          if (job.status === "failed")
+            throw new Error(job.error?.message ?? "sync failed");
+        }
+        throw new Error("sync timeout");
+      } catch {
+        setSyncing(false);
+        setSyncProgress(0);
+        return;
+      }
+    }
+    const timer = window.setInterval(
+      () => setSyncProgress((value) => Math.min(92, value + 16)),
+      300,
+    );
+    window.setTimeout(() => {
+      window.clearInterval(timer);
+      setSyncProgress(100);
+      setSyncing(false);
+    }, 1900);
+  }
+
+  async function reconcileSelected() {
+    const movement = movements.find((item) => item.id === selectedMovement);
+    const document = documents.find((item) => item.id === selectedDocument);
+    if (!movement || !document) return;
+    const allocated = Math.min(
+      Math.abs(movement.amount),
+      document.totalAmount - document.allocatedAmount,
+    );
+    const category: MovementCategory =
+      document.direction === "sale" ? "sale" : "purchase";
+    const taxableAmount = suggestedTaxableAmount(
+      { ...movement, category },
+      document,
+    );
+    if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      const response = await fetch("/api/reconcile", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          companyId: company.id,
+          movementId: movement.id,
+          documentId: document.id,
+          amount: allocated,
+          category,
+          taxableAmount,
+          documentNumber: document.folio,
+          documentType: document.documentType,
+          issuerRut:
+            document.direction === "sale"
+              ? company.rut
+              : document.counterpartyRut,
+        }),
+      });
+      if (!response.ok) return;
+    }
+    setMovements((items) =>
+      items.map((item) =>
+        item.id === movement.id
+          ? {
+              ...item,
+              reconciled: true,
+              category,
+              taxableAmount,
+              documentNumber: document.folio,
+              documentType: document.documentType,
+              issuerRut:
+                document.direction === "sale"
+                  ? company.rut
+                  : document.counterpartyRut,
+            }
+          : item,
+      ),
+    );
+    setDocuments((items) =>
+      items.map((item) =>
+        item.id === document.id
+          ? {
+              ...item,
+              allocatedAmount: item.allocatedAmount + allocated,
+              status:
+                item.allocatedAmount + allocated >= item.totalAmount
+                  ? "settled"
+                  : "partial",
+            }
+          : item,
+      ),
+    );
+    setSelectedDocument(null);
+  }
+
+  async function closePeriod(forced: boolean, forceReason?: string) {
+    const openingBalance = company.accounts.reduce(
+      (sum, account) => sum + account.openingBalance,
+      0,
+    );
+    if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      const response = await fetch("/api/close", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          companyId: company.id,
+          period,
+          openingBalance,
+          closingBalance: openingBalance + totals.cashBalance,
+          totals,
+          forced,
+          forceReason,
+        }),
+      });
+      if (!response.ok) throw new Error("No se pudo cerrar el período");
+      const result = await response.json();
+      setClosureVersion(Number(result.version));
+    } else {
+      setClosureVersion(Math.max(1, closureVersion + 1));
+    }
+    setPeriodClosed(true);
+  }
+
+  async function reopenPeriod(reason: string) {
+    if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      const response = await fetch("/api/reopen", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ companyId: company.id, period, reason }),
+      });
+      if (!response.ok) throw new Error("No se pudo reabrir el período");
+    }
+    setPeriodClosed(false);
+  }
+
+  async function addManual(form: FormData) {
+    const amount = Math.abs(Number(form.get("amount") ?? 0));
+    const operationType = Number(form.get("operationType")) as 1 | 2;
+    const category = String(form.get("category")) as MovementCategory;
+    const date = String(form.get("date"));
+    const movement: CashMovement = {
+      id: crypto.randomUUID(),
+      companyId: company.id,
+      accountId: String(form.get("accountId")),
+      period,
+      operationType,
+      occurredOn: date,
+      description: String(form.get("description")),
+      amount: operationType === 2 ? -amount : amount,
+      taxableAmount: Number(form.get("taxableAmount") ?? 0),
+      category,
+      source: "manual",
+      reconciled: true,
+      createdOrder: `z-${Date.now()}`,
+    };
+    if (process.env.NEXT_PUBLIC_SUPABASE_URL)
+      await persistMovements(company.id, [movement]);
+    setMovements((items) => [...items, movement]);
+    setManualOpen(false);
+  }
+
+  const filteredMovements = movements.filter(
+    (movement) =>
+      (accountFilter === "all" || movement.accountId === accountFilter) &&
+      (movementFilter === "all" ||
+        (movementFilter === "pending"
+          ? !movement.reconciled
+          : movement.reconciled)),
+  );
+  const filteredDocuments = documents.filter(
+    (document) =>
+      document.status !== "settled" &&
+      `${document.counterpartyName} ${document.counterpartyRut} ${document.folio}`
+        .toLowerCase()
+        .includes(documentQuery.toLowerCase()),
+  );
+  const activeMovement = movements.find(
+    (movement) => movement.id === selectedMovement,
+  );
+  const selectedDoc = documents.find(
+    (document) => document.id === selectedDocument,
+  );
+
+  return (
+    <main className="workspace">
+      <section className="workspace-head">
+        <div className="workspace-company">
+          <Link
+            href="/cartera"
+            className="back-link"
+            aria-label="Volver a cartera"
+          >
+            <ArrowLeft size={17} />
+          </Link>
+          <span className="company-monogram tint-1">CL</span>
+          <div>
+            <p className="eyebrow">Empresa seleccionada</p>
+            <h1>{company.name}</h1>
+            <span>
+              {company.rut} ·{" "}
+              {company.regime === "transparent"
+                ? "Pro Pyme Transparente"
+                : "Pro Pyme General simplificado"}
+            </span>
+          </div>
+        </div>
+        <div className="period-picker">
+          <button aria-label="Período anterior">
+            <ArrowLeft size={15} />
+          </button>
+          <span>
+            <CalendarDays size={16} />
+            <b>{periodLabel(period)}</b>
+            <small>Período de trabajo</small>
+          </span>
+          <button aria-label="Período siguiente">
+            <ArrowRight size={15} />
+          </button>
+        </div>
+        <div className={`period-state ${periodClosed ? "closed" : ""}`}>
+          {periodClosed ? <LockKeyhole size={16} /> : <CircleDot size={16} />}
+          <span>
+            <small>Estado del período</small>
+            <b>{periodClosed ? "Cerrado" : "En preparación"}</b>
+          </span>
+        </div>
+      </section>
+
+      <div className="workspace-body">
+      <aside className="workspace-sidebar">
+        <p className="sidebar-label">Mesa mensual</p>
+        <nav className="workspace-nav" aria-label="Secciones del libro">
+        {stages.map((item) => {
+          const Icon = item.icon;
+          return (
+          <button
+            key={item.id}
+            className={stage === item.id ? "active" : ""}
+            onClick={() => setStage(item.id)}
+          >
+            <Icon size={17} />
+            <span>
+              <b>{item.label}</b>
+              <small>{item.caption}</small>
+            </span>
+            {item.id === "reconcile" && pendingCount > 0 && (
+              <em>{pendingCount}</em>
+            )}
+          </button>
+          );
+        })}
+        </nav>
+        <div className="sidebar-status">
+          <small>Libro actual</small>
+          <b>{periodClosed ? "Versión cerrada" : "Borrador de trabajo"}</b>
+          {!periodClosed && <span>{pendingCount} pendiente{pendingCount === 1 ? "" : "s"} por resolver</span>}
+        </div>
+      </aside>
+      <div className="workspace-content">
+      {stage === "sources" && (
+        <button
+          className="button secondary settings-fab"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <KeyRound size={16} /> Configurar SII y cuentas
+        </button>
+      )}
+
+      {stage === "sources" && (
+        <Sources
+          company={company}
+          period={period}
+          syncing={syncing}
+          syncProgress={syncProgress}
+          syncRcv={syncRcv}
+          openImport={() => setImportOpen(true)}
+        />
+      )}
+      {stage === "reconcile" && (
+        <section className="reconcile-stage">
+          <div className="stage-title-row">
+            <div>
+              <p className="eyebrow">Mesa de trabajo</p>
+              <h2>Conciliar movimientos</h2>
+              <p>
+                Confirma qué documento explica cada cobro o pago. Nada se asume
+                automáticamente.
+              </p>
+            </div>
+            <div className="stage-actions">
+              <button
+                className="button secondary"
+                onClick={() => setManualOpen(true)}
+              >
+                <Plus size={16} /> Movimiento manual
+              </button>
+              <button
+                className="button primary"
+                onClick={() => setStage("review")}
+              >
+                Abrir libro <ArrowRight size={16} />
+              </button>
+            </div>
+          </div>
+          <div className="reconcile-summary">
+            <span>
+              <b>{movements.length}</b> movimientos del período
+            </span>
+            <span className="pending">
+              <b>{pendingCount}</b> requieren atención
+            </span>
+            <span>
+              <b>{documents.filter((d) => d.status === "pending").length}</b>{" "}
+              documentos RCV pendientes
+            </span>
+            <span className="balance">
+              <small>Saldo proyectado</small>
+              <b>{clp.format(totals.cashBalance)}</b>
+            </span>
+          </div>
+          <div className="reconcile-grid">
+            <section className="work-panel movements-panel">
+              <div className="panel-heading">
+                <div>
+                  <Landmark size={17} />
+                  <b>Movimientos de caja</b>
+                </div>
+                <select
+                  value={accountFilter}
+                  onChange={(e) => setAccountFilter(e.target.value)}
+                >
+                  <option value="all">Todas las cuentas</option>
+                  {company.accounts.map((account) => (
+                    <option key={account.id} value={account.id}>
+                      {account.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div className="segmented">
+                {(["pending", "all", "done"] as const).map((value) => (
+                  <button
+                    key={value}
+                    className={movementFilter === value ? "active" : ""}
+                    onClick={() => setMovementFilter(value)}
+                  >
+                    {value === "pending"
+                      ? "Pendientes"
+                      : value === "done"
+                        ? "Conciliados"
+                        : "Todos"}
+                  </button>
+                ))}
+              </div>
+              <div className="movement-list">
+                {filteredMovements.map((movement) => (
+                  <button
+                    key={movement.id}
+                    className={`movement-row ${selectedMovement === movement.id ? "selected" : ""}`}
+                    onClick={() => setSelectedMovement(movement.id)}
+                  >
+                    <span
+                      className={`movement-icon ${movement.operationType === 1 ? "income" : movement.operationType === 2 ? "expense" : "opening"}`}
+                    >
+                      {movement.operationType === 1 ? (
+                        <ArrowDownLeft size={16} />
+                      ) : movement.operationType === 2 ? (
+                        <ArrowUpRight size={16} />
+                      ) : (
+                        <WalletCards size={16} />
+                      )}
+                    </span>
+                    <span className="movement-copy">
+                      <b>{movement.description}</b>
+                      <small>
+                        {formatDate(movement.occurredOn)} ·{" "}
+                        {movement.reference || "Sin referencia"}
+                      </small>
+                    </span>
+                    <span
+                      className={`movement-amount ${movement.operationType === 1 ? "income" : ""}`}
+                    >
+                      <b>
+                        {movement.operationType === 2 ? "−" : "+"}
+                        {clp.format(Math.abs(movement.amount))}
+                      </b>
+                      <small>
+                        {movement.reconciled ? (
+                          <>
+                            <CheckCircle2 size={12} /> Conciliado
+                          </>
+                        ) : (
+                          <>
+                            <AlertCircle size={12} /> Pendiente
+                          </>
+                        )}
+                      </small>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            </section>
+            <section className="work-panel document-panel">
+              <div className="panel-heading">
+                <div>
+                  <FileCheck2 size={17} />
+                  <b>Documentos por cobrar o pagar</b>
+                </div>
+                <span>{filteredDocuments.length} abiertos</span>
+              </div>
+              <label className="mini-search">
+                <Search size={15} />
+                <input
+                  value={documentQuery}
+                  onChange={(e) => setDocumentQuery(e.target.value)}
+                  placeholder="Buscar RUT, folio o contraparte"
+                />
+              </label>
+              {activeMovement && (
+                <div className="match-hint">
+                  <Sparkles size={15} />
+                  <span>
+                    Ordenados por coincidencia con{" "}
+                    <b>{activeMovement.description}</b>
+                  </span>
+                </div>
+              )}
+              <div className="document-list">
+                {filteredDocuments.map((document) => {
+                  const difference = activeMovement
+                    ? Math.abs(
+                        Math.abs(activeMovement.amount) -
+                          (document.totalAmount - document.allocatedAmount),
+                      )
+                    : Infinity;
+                  const score =
+                    difference === 0
+                      ? "Coincidencia exacta"
+                      : difference < 10000
+                        ? "Monto cercano"
+                        : null;
+                  return (
+                    <button
+                      key={document.id}
+                      className={`document-row ${selectedDocument === document.id ? "selected" : ""}`}
+                      onClick={() => setSelectedDocument(document.id)}
+                    >
+                      <span className={`doc-direction ${document.direction}`}>
+                        {document.direction === "sale" ? "C" : "P"}
+                      </span>
+                      <span className="doc-main">
+                        <span>
+                          <b>{document.counterpartyName}</b>
+                          {score && <em>{score}</em>}
+                        </span>
+                        <small>
+                          {document.documentType} · Folio {document.folio} ·{" "}
+                          {formatDate(document.issuedOn)}
+                        </small>
+                        <small>{document.counterpartyRut}</small>
+                      </span>
+                      <span className="doc-amount">
+                        <b>
+                          {clp.format(
+                            document.totalAmount - document.allocatedAmount,
+                          )}
+                        </b>
+                        {document.status === "partial" && (
+                          <small>
+                            Abono {clp.format(document.allocatedAmount)}
+                          </small>
+                        )}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+              {!filteredDocuments.length && (
+                <div className="panel-empty">
+                  <FileCheck2 size={22} />
+                  <b>Sin documentos pendientes</b>
+                  <span>Todos los documentos visibles están conciliados.</span>
+                </div>
+              )}
+            </section>
+          </div>
+          <div
+            className={`reconcile-dock ${activeMovement && selectedDoc ? "ready" : ""}`}
+          >
+            <div>
+              {activeMovement ? (
+                <>
+                  <span
+                    className={`movement-icon ${activeMovement.operationType === 1 ? "income" : "expense"}`}
+                  >
+                    {activeMovement.operationType === 1 ? (
+                      <ArrowDownLeft size={15} />
+                    ) : (
+                      <ArrowUpRight size={15} />
+                    )}
+                  </span>
+                  <span>
+                    <small>Movimiento seleccionado</small>
+                    <b>
+                      {activeMovement.description} ·{" "}
+                      {clp.format(Math.abs(activeMovement.amount))}
+                    </b>
+                  </span>
+                </>
+              ) : (
+                <span>Selecciona un movimiento</span>
+              )}
+            </div>
+            <span className="dock-link">
+              <Link2 size={17} />
+            </span>
+            <div>
+              {selectedDoc ? (
+                <>
+                  <span className={`doc-direction ${selectedDoc.direction}`}>
+                    {selectedDoc.direction === "sale" ? "C" : "P"}
+                  </span>
+                  <span>
+                    <small>Documento seleccionado</small>
+                    <b>
+                      Folio {selectedDoc.folio} ·{" "}
+                      {clp.format(
+                        selectedDoc.totalAmount - selectedDoc.allocatedAmount,
+                      )}
+                    </b>
+                  </span>
+                </>
+              ) : (
+                <span>Selecciona un documento</span>
+              )}
+            </div>
+            <button
+              className="button primary"
+              disabled={!activeMovement || !selectedDoc}
+              onClick={reconcileSelected}
+            >
+              <Link2 size={16} /> Conciliar
+            </button>
+          </div>
+        </section>
+      )}
+      {stage === "review" && (
+        <Review
+          company={company}
+          period={period}
+          ledger={ledger}
+          totals={totals}
+          documents={documents}
+          excludedPendingCount={pendingCount}
+          goClose={() => setStage("close")}
+        />
+      )}
+      {stage === "close" && (
+        <CloseStage
+          company={company}
+          period={period}
+          movements={movements}
+          documents={documents}
+          ledger={ledger}
+          totals={totals}
+          validation={closeValidation}
+          openingConfirmed={openingConfirmed}
+          setOpeningConfirmed={setOpeningConfirmed}
+          closed={periodClosed}
+          version={closureVersion}
+          onClose={closePeriod}
+          onReopen={reopenPeriod}
+        />
+      )}
+
+      {importOpen && (
+        <ImportModal
+          company={company}
+          period={period}
+          onClose={() => setImportOpen(false)}
+          onImport={async (newMovements) => {
+            if (process.env.NEXT_PUBLIC_SUPABASE_URL)
+              await persistMovements(company.id, newMovements);
+            setMovements((current) => [...current, ...newMovements]);
+            setImportOpen(false);
+            setStage("reconcile");
+          }}
+        />
+      )}
+      {manualOpen && (
+        <ManualModal
+          company={company}
+          period={period}
+          onClose={() => setManualOpen(false)}
+          addManual={addManual}
+        />
+      )}
+      {settingsOpen && (
+        <CompanySetupModal
+          company={company}
+          onClose={() => setSettingsOpen(false)}
+          onSaved={() => {
+            setSettingsOpen(false);
+            router.refresh();
+          }}
+        />
+      )}
+      </div>
+      </div>
+    </main>
+  );
+}
+
+function Sources({
+  company,
+  period,
+  syncing,
+  syncProgress,
+  syncRcv,
+  openImport,
+}: {
+  company: Company;
+  period: string;
+  syncing: boolean;
+  syncProgress: number;
+  syncRcv: () => void;
+  openImport: () => void;
+}) {
+  return (
+    <section className="content-stage">
+      <div className="stage-title-row">
+        <div>
+          <p className="eyebrow">Origen de información</p>
+          <h2>Fuentes del período</h2>
+          <p>
+            El libro se arma con documentos tributarios y evidencia real de
+            cobros y pagos.
+          </p>
+        </div>
+      </div>
+      <div className="source-grid">
+        <article className="source-card">
+          <div className="source-card-head">
+            <span className="source-icon sii">SII</span>
+            <span className="status-pill ok">Conectado</span>
+          </div>
+          <h3>Registro de Compras y Ventas</h3>
+          <p>Detalle oficial de compras y ventas de {periodLabel(period)}.</p>
+          <div className="source-stats">
+            <span>
+              <b>11</b>
+              <small>Ventas</small>
+            </span>
+            <span>
+              <b>8</b>
+              <small>Compras</small>
+            </span>
+            <span>
+              <b>19</b>
+              <small>Documentos</small>
+            </span>
+          </div>
+          {syncing ? (
+            <div className="sync-progress">
+              <span>
+                <LoaderCircle className="spin" size={16} /> Consultando SII…{" "}
+                <b>{syncProgress}%</b>
+              </span>
+              <i style={{ width: `${syncProgress}%` }} />
+            </div>
+          ) : (
+            <button className="button secondary wide" onClick={syncRcv}>
+              <RefreshCw size={16} /> Sincronizar nuevamente
+            </button>
+          )}
+          <small className="source-note">
+            Última sincronización: hoy, 09:42
+          </small>
+        </article>
+        <article className="source-card">
+          <div className="source-card-head">
+            <span className="source-icon bank">
+              <Landmark size={20} />
+            </span>
+            <span className="status-pill progress">2 cuentas</span>
+          </div>
+          <h3>Cartolas bancarias</h3>
+          <p>Importa CSV o Excel. Revisarás el mapeo antes de guardar.</p>
+          <div className="account-mini-list">
+            {company.accounts
+              .filter((a) => a.kind === "bank")
+              .map((account) => (
+                <span key={account.id}>
+                  <b>{account.bank}</b>
+                  <small>•••• {account.numberLast4} · 6 movimientos</small>
+                  <CheckCircle2 size={15} />
+                </span>
+              ))}
+          </div>
+          <button className="button primary wide" onClick={openImport}>
+            <Upload size={16} /> Importar cartola
+          </button>
+        </article>
+        <article className="source-card">
+          <div className="source-card-head">
+            <span className="source-icon cash">
+              <Banknote size={20} />
+            </span>
+            <span className="status-pill ok">Activa</span>
+          </div>
+          <h3>Caja y movimientos manuales</h3>
+          <p>
+            Efectivo, aportes, préstamos, retiros y otros flujos sin documento
+            RCV.
+          </p>
+          <div className="cash-balance">
+            <small>Saldo inicial registrado</small>
+            <b>
+              {clp.format(
+                company.accounts
+                  .filter((a) => a.kind === "cash")
+                  .reduce((s, a) => s + a.openingBalance, 0),
+              )}
+            </b>
+          </div>
+          <button className="button secondary wide">
+            <Plus size={16} /> Agregar movimiento
+          </button>
+        </article>
+      </div>
+      <div className="source-principle">
+        <ShieldCheck size={19} />
+        <span>
+          <b>Regla de integridad</b>
+          <small>
+            La fecha del documento RCV nunca se usa como fecha de caja sin una
+            confirmación de pago o cobro.
+          </small>
+        </span>
+      </div>
+    </section>
+  );
+}
+
+function Review({
+  company,
+  period,
+  ledger,
+  totals,
+  documents,
+  excludedPendingCount,
+  goClose,
+}: {
+  company: Company;
+  period: string;
+  ledger: ReturnType<typeof buildLedger>;
+  totals: ReturnType<typeof calculateTotals>;
+  documents: RcvDocument[];
+  excludedPendingCount: number;
+  goClose: () => void;
+}) {
+  return (
+    <section className="content-stage review-stage">
+      <div className="stage-title-row">
+        <div>
+          <p className="eyebrow">Vista legal</p>
+          <h2>Revisión del libro detallado</h2>
+          <p>Columnas C1–C9 y totales exigidos por el formato SII.</p>
+        </div>
+        <div className="stage-actions">
+          <div className="export-menu">
+            <button className="button secondary">
+              <Download size={16} /> Exportar borrador <ChevronDown size={14} />
+            </button>
+            <div className="export-popover">
+              <button
+                onClick={() => exportExcel(company, period, ledger, documents)}
+              >
+                Excel completo
+              </button>
+              <button onClick={() => exportPdf(company, period, ledger)}>
+                PDF detallado
+              </button>
+              <button onClick={() => exportCsv(company, period, ledger)}>
+                CSV detallado
+              </button>
+              <button
+                onClick={() => exportCsv(company, period, ledger, 1, "daily")}
+              >
+                CSV resumen diario
+              </button>
+            </div>
+          </div>
+          <button className="button primary" onClick={goClose}>
+            Ir al cierre <ArrowRight size={16} />
+          </button>
+        </div>
+      </div>
+      <div className="legal-banner">
+        <span>BORRADOR</span>
+        <div>
+          <b>{company.name}</b>
+          <small>
+            {company.rut} · {periodLabel(period)} · Versión 1
+          </small>
+        </div>
+        <div>
+          <small>Formato</small>
+          <b>Libro de Caja detallado</b>
+        </div>
+      </div>
+      {excludedPendingCount > 0 && (
+        <div className="draft-notice">
+          <AlertCircle size={16} />
+          <span><b>{excludedPendingCount} movimiento{excludedPendingCount === 1 ? "" : "s"} pendiente{excludedPendingCount === 1 ? "" : "s"}</b> no figura{excludedPendingCount === 1 ? "" : "n"} en este borrador hasta que se clasifique{excludedPendingCount === 1 ? "" : "n"}.</span>
+        </div>
+      )}
+      <div className="ledger-wrap">
+        <table className="ledger-table">
+          <thead>
+            <tr>
+              <th>
+                C1
+                <br />
+                <span>N°</span>
+              </th>
+              <th>
+                C2
+                <br />
+                <span>Operación</span>
+              </th>
+              <th>
+                C3
+                <br />
+                <span>Documento</span>
+              </th>
+              <th>
+                C4
+                <br />
+                <span>Tipo</span>
+              </th>
+              <th>
+                C5
+                <br />
+                <span>RUT emisor</span>
+              </th>
+              <th>
+                C6
+                <br />
+                <span>Fecha</span>
+              </th>
+              <th>
+                C7
+                <br />
+                <span>Glosa</span>
+              </th>
+              <th>
+                C8
+                <br />
+                <span>Monto flujo</span>
+              </th>
+              <th>
+                C9
+                <br />
+                <span>Base imponible</span>
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {ledger.map((row) => (
+              <tr key={row.movementId}>
+                <td>{row.correlation}</td>
+                <td>
+                  <span className={`op-code op-${row.operationType}`}>
+                    {row.operationType}
+                  </span>
+                </td>
+                <td>{row.documentNumber || "—"}</td>
+                <td>{row.documentType}</td>
+                <td>{row.issuerRut || "—"}</td>
+                <td>{formatDate(row.occurredOn)}</td>
+                <td>{row.description}</td>
+                <td className="numeric">{clp.format(row.flowAmount)}</td>
+                <td className="numeric">{clp.format(row.taxableAmount)}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <div className="totals-grid">
+        <article>
+          <small>C10 · Total ingresos</small>
+          <b>{clp.format(totals.incomeFlow)}</b>
+        </article>
+        <article>
+          <small>C11 · Total egresos</small>
+          <b>{clp.format(totals.expenseFlow)}</b>
+        </article>
+        <article className="strong">
+          <small>C12 · Saldo flujo de caja</small>
+          <b>{clp.format(totals.cashBalance)}</b>
+        </article>
+        <article>
+          <small>C13 · Ingresos base</small>
+          <b>{clp.format(totals.taxableIncome)}</b>
+        </article>
+        <article>
+          <small>C14 · Egresos base</small>
+          <b>{clp.format(totals.taxableExpense)}</b>
+        </article>
+        <article className="strong">
+          <small>C15 · Resultado neto</small>
+          <b>{clp.format(totals.netResult)}</b>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function CloseStage({
+  company,
+  period,
+  movements,
+  documents,
+  ledger,
+  totals,
+  validation,
+  openingConfirmed,
+  setOpeningConfirmed,
+  closed,
+  version,
+  onClose,
+  onReopen,
+}: {
+  company: Company;
+  period: string;
+  movements: CashMovement[];
+  documents: RcvDocument[];
+  ledger: ReturnType<typeof buildLedger>;
+  totals: ReturnType<typeof calculateTotals>;
+  validation: ReturnType<typeof validateClose>;
+  openingConfirmed: boolean;
+  setOpeningConfirmed: (value: boolean) => void;
+  closed: boolean;
+  version: number;
+  onClose: (forced: boolean, forceReason?: string) => Promise<void>;
+  onReopen: (reason: string) => Promise<void>;
+}) {
+  const [forceReason, setForceReason] = useState("");
+  const [closing, setClosing] = useState(false);
+  const [closeError, setCloseError] = useState("");
+  const [reopenReason, setReopenReason] = useState("");
+
+  async function submitClose() {
+    setClosing(true);
+    setCloseError("");
+    try {
+      await onClose(
+        !validation.canClose,
+        validation.canClose ? undefined : forceReason.trim(),
+      );
+    } catch {
+      setCloseError(
+        "No se pudo cerrar el período. Revisa la conexión e inténtalo nuevamente.",
+      );
+    } finally {
+      setClosing(false);
+    }
+  }
+  if (closed)
+    return (
+      <section className="content-stage close-success">
+        <span className="success-seal">
+          <LockKeyhole size={30} />
+        </span>
+        <p className="eyebrow">Período protegido</p>
+        <h2>{periodLabel(period)} quedó cerrado</h2>
+        <p>
+          Se creó la versión {version} del libro. Los datos quedan inmutables y
+          cualquier reapertura generará una nueva versión auditada.
+        </p>
+        <div className="closed-summary">
+          <span>
+            <small>Saldo final</small>
+            <b>{clp.format(totals.cashBalance)}</b>
+          </span>
+          <span>
+            <small>Movimientos</small>
+            <b>{movements.length}</b>
+          </span>
+          <span>
+            <small>Huella</small>
+            <b>v{version}</b>
+          </span>
+        </div>
+        <div className="stage-actions">
+          <button
+            className="button secondary"
+            onClick={() =>
+              exportExcel(
+                company,
+                period,
+                ledger,
+                documents,
+                version,
+                "CERRADO",
+              )
+            }
+          >
+            Descargar Excel
+          </button>
+          <button
+            className="button primary"
+            onClick={() =>
+              exportPdf(company, period, ledger, version, "CERRADO")
+            }
+          >
+            Descargar PDF firmado
+          </button>
+        </div>
+        <label className="force-field">
+          Motivo para reabrir
+          <textarea
+            value={reopenReason}
+            onChange={(event) => setReopenReason(event.target.value)}
+            placeholder="Describe la corrección que se realizará…"
+          />
+        </label>
+        <button
+          className="button secondary"
+          disabled={closing || reopenReason.trim().length < 12}
+          onClick={async () => {
+            setClosing(true);
+            setCloseError("");
+            try {
+              await onReopen(reopenReason.trim());
+            } catch {
+              setCloseError("No se pudo reabrir el período.");
+            } finally {
+              setClosing(false);
+            }
+          }}
+        >
+          Reabrir y crear nueva versión
+        </button>
+        {closeError && <span className="login-error">{closeError}</span>}
+      </section>
+    );
+  return (
+    <section className="content-stage close-stage">
+      <div className="stage-title-row">
+        <div>
+          <p className="eyebrow">Control de integridad</p>
+          <h2>Cerrar {periodLabel(period)}</h2>
+          <p>
+            El cierre congela esta versión y traspasa el saldo final al mes
+            siguiente.
+          </p>
+        </div>
+      </div>
+      <div className="close-layout">
+        <section className="validation-card">
+          <h3>Validaciones del período</h3>
+          <button
+            className="validation-row"
+            onClick={() => setOpeningConfirmed(!openingConfirmed)}
+          >
+            <span className={openingConfirmed ? "check-ok" : "check-bad"}>
+              {openingConfirmed ? <Check size={15} /> : <X size={15} />}
+            </span>
+            <span>
+              <b>Continuidad del saldo inicial</b>
+              <small>
+                {openingConfirmed
+                  ? "Coincide con el cierre del período anterior."
+                  : "Confirma el origen del saldo antes de cerrar."}
+              </small>
+            </span>
+            <b>
+              {clp.format(
+                company.accounts.reduce(
+                  (sum, account) => sum + account.openingBalance,
+                  0,
+                ),
+              )}
+            </b>
+          </button>
+          {validation.blockers
+            .filter((b) => b.code !== "opening")
+            .map((blocker) => (
+              <div className="validation-row" key={blocker.code}>
+                <span className="check-bad">
+                  <AlertCircle size={15} />
+                </span>
+                <span>
+                  <b>{blocker.label}</b>
+                  <small>
+                    Requiere revisión o una justificación de cierre forzado.
+                  </small>
+                </span>
+                <b>{blocker.count}</b>
+              </div>
+            ))}
+          {validation.blockers.length === 0 && (
+            <div className="validation-row">
+              <span className="check-ok">
+                <Check size={15} />
+              </span>
+              <span>
+                <b>Movimientos y documentos conciliados</b>
+                <small>No quedan excepciones que impidan el cierre.</small>
+              </span>
+              <b>OK</b>
+            </div>
+          )}
+        </section>
+        <aside className="close-card">
+          <p className="eyebrow">Resumen final</p>
+          <h3>Versión {Math.max(1, version + 1)}</h3>
+          <dl>
+            <div>
+              <dt>Saldo inicial</dt>
+              <dd>
+                {clp.format(
+                  company.accounts.reduce(
+                    (sum, account) => sum + account.openingBalance,
+                    0,
+                  ),
+                )}
+              </dd>
+            </div>
+            <div>
+              <dt>Flujo de ingresos</dt>
+              <dd>{clp.format(totals.incomeFlow)}</dd>
+            </div>
+            <div>
+              <dt>Flujo de egresos</dt>
+              <dd>−{clp.format(totals.expenseFlow)}</dd>
+            </div>
+            <div className="total">
+              <dt>Saldo de caja</dt>
+              <dd>{clp.format(totals.cashBalance)}</dd>
+            </div>
+          </dl>
+          {!validation.canClose && (
+            <label className="force-field">
+              Justificación para cierre forzado
+              <textarea
+                value={forceReason}
+                onChange={(e) => setForceReason(e.target.value)}
+                placeholder="Explica por qué se cierra con excepciones…"
+              />
+            </label>
+          )}
+          <button
+            className="button primary wide"
+            disabled={
+              closing ||
+              (!validation.canClose && forceReason.trim().length < 12)
+            }
+            onClick={submitClose}
+          >
+            {closing ? (
+              <LoaderCircle className="spin" size={16} />
+            ) : (
+              <LockKeyhole size={16} />
+            )}{" "}
+            {closing
+              ? "Cerrando…"
+              : validation.canClose
+                ? "Cerrar período"
+                : "Cerrar con excepción"}
+          </button>
+          {closeError && <span className="login-error">{closeError}</span>}
+          <small className="immutable-note">
+            <ShieldCheck size={14} /> El cierre queda registrado en la
+            auditoría.
+          </small>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function ImportModal({
+  company,
+  period,
+  onClose,
+  onImport,
+}: {
+  company: Company;
+  period: string;
+  onClose: () => void;
+  onImport: (movements: CashMovement[]) => Promise<void> | void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [tabular, setTabular] = useState<TabularFile | null>(null);
+  const [mapping, setMapping] = useState<ImportMapping | null>(null);
+  const [filename, setFilename] = useState("");
+  const [accountId, setAccountId] = useState(
+    company.accounts.find((a) => a.kind === "bank")?.id ?? "",
+  );
+  const [errors, setErrors] = useState<string[]>([]);
+  const [busy, setBusy] = useState(false);
+  async function chooseFile(file?: File) {
+    if (!file) return;
+    setFilename(file.name);
+    setBusy(true);
+    try {
+      const data = await readTabularFile(file);
+      setTabular(data);
+      setMapping(suggestMapping(data.headers));
+    } catch (error) {
+      setErrors([
+        error instanceof Error ? error.message : "No se pudo leer el archivo",
+      ]);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function importRows() {
+    if (!tabular || !mapping) return;
+    setBusy(true);
+    const result = await mapBankRows(tabular.rows, mapping);
+    setErrors(result.errors);
+    if (!result.rows.length) {
+      setBusy(false);
+      return;
+    }
+    await onImport(
+      result.rows.map((row) => ({
+        id: crypto.randomUUID(),
+        companyId: company.id,
+        accountId,
+        period,
+        operationType: row.amount > 0 ? 1 : 2,
+        occurredOn: row.date,
+        description: row.description,
+        reference: row.reference,
+        amount: row.amount,
+        taxableAmount: 0,
+        source: "bank",
+        reconciled: false,
+        createdOrder: `import-${row.rowNumber}`,
+        issuerRut: row.counterpartyRut,
+      })),
+    );
+    setBusy(false);
+  }
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div
+        className="modal-card import-modal"
+        role="dialog"
+        aria-modal="true"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Importación segura</p>
+            <h2>Importar cartola bancaria</h2>
+            <p>Revisa la estructura antes de crear movimientos.</p>
+          </div>
+          <button className="modal-close" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        {!tabular ? (
+          <div
+            className="upload-zone"
+            onClick={() => fileRef.current?.click()}
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={(e) => {
+              e.preventDefault();
+              chooseFile(e.dataTransfer.files[0]);
+            }}
+          >
+            <input
+              ref={fileRef}
+              type="file"
+              accept=".csv,.xlsx,.xls"
+              hidden
+              onChange={(e) => chooseFile(e.target.files?.[0])}
+            />
+            {busy ? (
+              <LoaderCircle className="spin" size={26} />
+            ) : (
+              <Upload size={26} />
+            )}
+            <b>Arrastra una cartola o selecciónala</b>
+            <span>CSV, XLSX o XLS · máximo 10 MB</span>
+            <button className="button secondary">Seleccionar archivo</button>
+          </div>
+        ) : (
+          <>
+            <div className="import-filebar">
+              <FileSpreadsheet size={19} />
+              <span>
+                <b>{filename}</b>
+                <small>
+                  {tabular.rows.length} filas detectadas · Hoja{" "}
+                  {tabular.selectedSheet}
+                </small>
+              </span>
+              <button
+                onClick={() => {
+                  setTabular(null);
+                  setMapping(null);
+                }}
+              >
+                Cambiar
+              </button>
+            </div>
+            <div className="mapping-grid">
+              <label>
+                Cuenta de destino
+                <select
+                  value={accountId}
+                  onChange={(e) => setAccountId(e.target.value)}
+                >
+                  {company.accounts
+                    .filter((a) => a.kind === "bank")
+                    .map((a) => (
+                      <option value={a.id} key={a.id}>
+                        {a.name} · {a.bank}
+                      </option>
+                    ))}
+                </select>
+              </label>
+              <MapSelect
+                label="Fecha"
+                value={mapping?.date ?? ""}
+                headers={tabular.headers}
+                onChange={(value) => setMapping({ ...mapping!, date: value })}
+              />
+              <MapSelect
+                label="Descripción / glosa"
+                value={mapping?.description ?? ""}
+                headers={tabular.headers}
+                onChange={(value) =>
+                  setMapping({ ...mapping!, description: value })
+                }
+              />
+              <MapSelect
+                label="Monto con signo"
+                value={mapping?.amount ?? ""}
+                headers={tabular.headers}
+                optional
+                onChange={(value) => setMapping({ ...mapping!, amount: value })}
+              />
+              <MapSelect
+                label="Cargos"
+                value={mapping?.debit ?? ""}
+                headers={tabular.headers}
+                optional
+                onChange={(value) => setMapping({ ...mapping!, debit: value })}
+              />
+              <MapSelect
+                label="Abonos"
+                value={mapping?.credit ?? ""}
+                headers={tabular.headers}
+                optional
+                onChange={(value) => setMapping({ ...mapping!, credit: value })}
+              />
+            </div>
+            <div className="preview-table">
+              <table>
+                <thead>
+                  <tr>
+                    {tabular.headers.slice(0, 5).map((h) => (
+                      <th key={h}>{h}</th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody>
+                  {tabular.rows.slice(0, 4).map((row, i) => (
+                    <tr key={i}>
+                      {tabular.headers.slice(0, 5).map((h) => (
+                        <td key={h}>{String(row[h] ?? "")}</td>
+                      ))}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {errors.length > 0 && (
+              <div className="import-errors">
+                <AlertCircle size={16} />
+                <span>
+                  {errors.slice(0, 2).join(" ")}
+                  {errors.length > 2 ? ` y ${errors.length - 2} más.` : ""}
+                </span>
+              </div>
+            )}
+          </>
+        )}
+        <div className="modal-actions">
+          <button className="button secondary" onClick={onClose}>
+            Cancelar
+          </button>
+          <button
+            className="button primary"
+            disabled={
+              !tabular ||
+              busy ||
+              !mapping?.date ||
+              !mapping?.description ||
+              (!mapping?.amount && !mapping?.debit && !mapping?.credit)
+            }
+            onClick={importRows}
+          >
+            {busy ? (
+              <LoaderCircle className="spin" size={16} />
+            ) : (
+              <Upload size={16} />
+            )}{" "}
+            Importar movimientos
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function MapSelect({
+  label,
+  value,
+  headers,
+  onChange,
+  optional,
+}: {
+  label: string;
+  value: string;
+  headers: string[];
+  onChange: (value: string) => void;
+  optional?: boolean;
+}) {
+  return (
+    <label>
+      {label}
+      {optional && <small>Opcional</small>}
+      <select value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">No asignar</option>
+        {headers.map((header) => (
+          <option key={header}>{header}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function ManualModal({
+  company,
+  period,
+  onClose,
+  addManual,
+}: {
+  company: Company;
+  period: string;
+  onClose: () => void;
+  addManual: (form: FormData) => void;
+}) {
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div
+        className="modal-card compact"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Flujo sin cartola</p>
+            <h2>Movimiento manual</h2>
+            <p>Registra caja, aportes, retiros u otros movimientos.</p>
+          </div>
+          <button className="modal-close" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <form action={addManual} className="form-grid">
+          <label>
+            Fecha
+            <input
+              type="date"
+              name="date"
+              defaultValue={`${period}-20`}
+              required
+            />
+          </label>
+          <label>
+            Cuenta
+            <select name="accountId">
+              {company.accounts.map((a) => (
+                <option value={a.id} key={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Flujo
+            <select name="operationType">
+              <option value="1">Ingreso</option>
+              <option value="2">Egreso</option>
+            </select>
+          </label>
+          <label>
+            Categoría
+            <select name="category">
+              <option value="other">Otro flujo</option>
+              <option value="loan">Préstamo</option>
+              <option value="capital_contribution">Aporte de capital</option>
+              <option value="owner_withdrawal">Retiro del propietario</option>
+              <option value="tax">Impuesto</option>
+              <option value="payroll">Remuneraciones</option>
+              <option value="refund">Devolución</option>
+            </select>
+          </label>
+          <label className="span-2">
+            Glosa
+            <input
+              name="description"
+              required
+              placeholder="Descripción clara del movimiento"
+            />
+          </label>
+          <label>
+            Monto total
+            <input type="number" min="1" name="amount" required />
+          </label>
+          <label>
+            Monto base imponible
+            <input
+              type="number"
+              min="0"
+              name="taxableAmount"
+              defaultValue="0"
+              required
+            />
+          </label>
+          <div className="modal-actions span-2">
+            <button
+              type="button"
+              className="button secondary"
+              onClick={onClose}
+            >
+              Cancelar
+            </button>
+            <button className="button primary">Guardar movimiento</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+function CompanySetupModal({
+  company,
+  onClose,
+  onSaved,
+}: {
+  company: Company;
+  onClose: () => void;
+  onSaved: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  async function save(form: FormData) {
+    setBusy(true);
+    setError("");
+    try {
+      if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
+        onSaved();
+        return;
+      }
+      const password = String(form.get("siiPassword") ?? "");
+      if (password) {
+        const credentialResponse = await fetch(
+          `/api/companies/${company.id}/credentials`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ password }),
+          },
+        );
+        if (!credentialResponse.ok) throw new Error("credential failed");
+      }
+      const accountResponse = await fetch(
+        `/api/companies/${company.id}/accounts`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: String(form.get("accountName")),
+            kind: "bank",
+            bank: String(form.get("bank")),
+            numberLast4: String(form.get("last4")),
+            openingBalance: Number(form.get("openingBalance")),
+          }),
+        },
+      );
+      if (!accountResponse.ok) throw new Error("save failed");
+      onSaved();
+    } catch {
+      setError("No se pudo guardar la configuración.");
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div
+        className="modal-card compact"
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Configuración privada</p>
+            <h2>SII y cuenta bancaria</h2>
+            <p>La clave SII se cifra antes de guardarse y solo se usa al sincronizar.</p>
+          </div>
+          <button className="modal-close" onClick={onClose}>
+            ×
+          </button>
+        </div>
+        <form action={save} className="form-grid">
+          <label className="span-2">
+            Clave SII
+            <input name="siiPassword" type="password" autoComplete="new-password" placeholder="Ingresa o reemplaza la clave SII" />
+            <small>Déjala vacía para conservar la clave ya guardada.</small>
+          </label>
+          <label>
+            Banco
+            <input name="bank" required placeholder="Banco de Chile" />
+          </label>
+          <label>
+            Últimos 4 dígitos
+            <input
+              name="last4"
+              inputMode="numeric"
+              pattern="[0-9]{4}"
+              maxLength={4}
+              required
+              placeholder="4831"
+            />
+          </label>
+          <label className="span-2">
+            Nombre interno de la cuenta
+            <input
+              name="accountName"
+              required
+              defaultValue="Cuenta corriente principal"
+            />
+          </label>
+          <label className="span-2">
+            Saldo inicial
+            <input
+              name="openingBalance"
+              type="number"
+              required
+              defaultValue="0"
+            />
+          </label>
+          {error && <span className="login-error span-2">{error}</span>}
+          <div className="modal-actions span-2">
+            <button
+              type="button"
+              className="button secondary"
+              onClick={onClose}
+            >
+              Cancelar
+            </button>
+            <button className="button primary" disabled={busy}>
+              {busy ? (
+                <LoaderCircle className="spin" size={16} />
+              ) : (
+                <ShieldCheck size={16} />
+              )}{" "}
+              Guardar configuración
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  );
+}
+
+async function persistMovements(companyId: string, movements: CashMovement[]) {
+  const rows = movements.map((movement) => ({
+    accountId: movement.accountId,
+    period: movement.period,
+    operationType: movement.operationType,
+    occurredOn: movement.occurredOn,
+    description: movement.description,
+    reference: movement.reference,
+    amount: movement.amount,
+    taxableAmount: movement.taxableAmount,
+    category: movement.category,
+    source: movement.source,
+    reconciled: movement.reconciled,
+    issuerRut: movement.issuerRut,
+    fingerprint:
+      movement.source === "bank"
+        ? `${movement.occurredOn}|${movement.amount}|${movement.description}|${movement.reference ?? ""}`
+        : undefined,
+  }));
+  const response = await fetch("/api/movements", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ companyId, rows }),
+  });
+  if (!response.ok) throw new Error("No se pudieron guardar los movimientos");
+}
