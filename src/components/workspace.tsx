@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useRef, useState, type RefObject } from "react";
 import {
   AlertCircle,
   ArrowDownLeft,
@@ -40,6 +40,7 @@ import {
 } from "@/lib/bank-import";
 import { exportCsv, exportExcel, exportPdf } from "@/lib/exports";
 import { clp, formatDate, periodLabel } from "@/lib/format";
+import { parseSiiRcvFile, type SiiRcvFile } from "@/lib/sii-rcv-import";
 import {
   buildLedger,
   buildRcvLedger,
@@ -88,6 +89,7 @@ export function Workspace({
   >("pending");
   const [documentQuery, setDocumentQuery] = useState("");
   const [importOpen, setImportOpen] = useState(false);
+  const [rcvImportOpen, setRcvImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
@@ -417,12 +419,12 @@ export function Workspace({
       {stage === "sources" && (
         <Sources
           company={company}
-          period={period}
           syncing={syncing}
           syncProgress={syncProgress}
           syncError={syncError}
           syncRcv={syncRcv}
           openSettings={() => setSettingsOpen(true)}
+          openRcvImport={() => setRcvImportOpen(true)}
           documents={documents}
         />
       )}
@@ -737,6 +739,18 @@ export function Workspace({
           }}
         />
       )}
+      {rcvImportOpen && (
+        <SiiRcvImportModal
+          company={company}
+          period={period}
+          onClose={() => setRcvImportOpen(false)}
+          onImported={() => {
+            setRcvImportOpen(false);
+            setStage("review");
+            router.refresh();
+          }}
+        />
+      )}
       {manualOpen && (
         <ManualModal
           company={company}
@@ -764,21 +778,21 @@ export function Workspace({
 
 function Sources({
   company,
-  period,
   syncing,
   syncProgress,
   syncError,
   syncRcv,
   openSettings,
+  openRcvImport,
   documents,
 }: {
   company: Company;
-  period: string;
   syncing: boolean;
   syncProgress: number;
   syncError: string | null;
   syncRcv: () => void;
   openSettings: () => void;
+  openRcvImport: () => void;
   documents: RcvDocument[];
 }) {
   return (
@@ -802,8 +816,8 @@ function Sources({
             </span>
           </div>
           <h3>Registro de Compras y Ventas</h3>
-          <p>{company.hasSiiCredential ? `Detalle oficial de compras y ventas de ${periodLabel(period)}.` : "Guarda primero la clave SII de esta empresa. Después podrás extraer el RCV."}</p>
-          {company.hasSiiCredential && <div className="source-stats">
+          <p>Importa los CSV detallados descargados desde el SII. También puedes extraerlos si la credencial SII está configurada.</p>
+          <div className="source-stats">
             <span>
               <b>{documents.filter((document) => document.direction === "sale").length}</b>
               <small>Ventas</small>
@@ -816,12 +830,11 @@ function Sources({
               <b>{documents.length}</b>
               <small>Documentos</small>
             </span>
-          </div>}
-          {!company.hasSiiCredential ? (
-            <button className="button primary wide" onClick={openSettings}>
-              <KeyRound size={16} /> Paso 1 · Guardar clave SII
-            </button>
-          ) : syncing ? (
+          </div>
+          <button className="button primary wide" onClick={openRcvImport}>
+            <Upload size={16} /> Importar CSV del SII
+          </button>
+          {company.hasSiiCredential && (syncing ? (
             <div className="sync-progress">
               <span>
                 <LoaderCircle className="spin" size={16} /> Consultando SII…{" "}
@@ -833,9 +846,10 @@ function Sources({
             <button className="button secondary wide" onClick={syncRcv}>
               <RefreshCw size={16} /> Extraer RCV ahora
             </button>
-          )}
+          ))}
+          {!company.hasSiiCredential && <button className="text-button" onClick={openSettings}><KeyRound size={14} /> Configurar extracción automática SII</button>}
           {syncError && <p className="form-error" role="alert">{syncError}</p>}
-          {company.hasSiiCredential && <small className="source-note">Luego podrás volver a extraer el RCV cuando lo necesites.</small>}
+          <small className="source-note">La carga CSV es la fuente principal y evita depender de la sesión SII.</small>
         </article>
       </div>
       <div className="source-principle">
@@ -1290,6 +1304,128 @@ function CloseStage({
       </div>
     </section>
   );
+}
+
+function SiiRcvImportModal({
+  company,
+  period,
+  onClose,
+  onImported,
+}: {
+  company: Company;
+  period: string;
+  onClose: () => void;
+  onImported: () => void;
+}) {
+  const purchaseRef = useRef<HTMLInputElement>(null);
+  const saleRef = useRef<HTMLInputElement>(null);
+  const [purchase, setPurchase] = useState<SiiRcvFile | null>(null);
+  const [sale, setSale] = useState<SiiRcvFile | null>(null);
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function select(file: File | undefined, expected: "purchase" | "sale") {
+    if (!file) return;
+    setBusy(true);
+    setError("");
+    try {
+      const parsed = await parseSiiRcvFile(file, period);
+      if (parsed.direction !== expected)
+        throw new Error(expected === "purchase" ? "Selecciona el CSV de Compras del SII." : "Selecciona el CSV de Ventas del SII.");
+      if (expected === "purchase") setPurchase(parsed);
+      else setSale(parsed);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo leer el archivo.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function submit() {
+    if (!purchase || !sale) return;
+    setBusy(true);
+    setError("");
+    try {
+      const response = await fetch("/api/rcv/import", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          companyId: company.id,
+          period,
+          files: [
+            { filename: purchase.filename, direction: purchase.direction },
+            { filename: sale.filename, direction: sale.direction },
+          ],
+          documents: [...purchase.documents, ...sale.documents],
+        }),
+      });
+      const result = await response.json();
+      if (!response.ok) throw new Error(result.error ?? "No se pudo importar el RCV.");
+      onImported();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "No se pudo importar el RCV.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  const total = (purchase?.documents.length ?? 0) + (sale?.documents.length ?? 0);
+  return (
+    <div className="modal-backdrop" onMouseDown={onClose}>
+      <div className="modal-card compact" role="dialog" aria-modal="true" onMouseDown={(event) => event.stopPropagation()}>
+        <div className="modal-header">
+          <div>
+            <p className="eyebrow">Fuente principal</p>
+            <h2>Importar RCV detallado</h2>
+            <p>Sube los dos CSV descargados desde el SII para {periodLabel(period)}.</p>
+          </div>
+          <button className="modal-close" onClick={onClose}>×</button>
+        </div>
+        <div className="form-stack sii-import-stack">
+          <SiiFileSlot
+            label="Libro de Compras"
+            hint="Archivo RCV_COMPRA_REGISTRO"
+            file={purchase}
+            inputRef={purchaseRef}
+            busy={busy}
+            onSelect={(file) => select(file, "purchase")}
+          />
+          <SiiFileSlot
+            label="Libro de Ventas"
+            hint="Archivo RCV_VENTA"
+            file={sale}
+            inputRef={saleRef}
+            busy={busy}
+            onSelect={(file) => select(file, "sale")}
+          />
+          {total > 0 && <div className="sii-import-summary"><b>{total} documentos detectados</b><span>{purchase?.documents.length ?? 0} compras · {sale?.documents.length ?? 0} ventas</span></div>}
+          {error && <p className="form-error" role="alert">{error}</p>}
+        </div>
+        <div className="modal-actions">
+          <button className="button secondary" onClick={onClose}>Cancelar</button>
+          <button className="button primary" disabled={!purchase || !sale || busy} onClick={submit}>
+            {busy ? <LoaderCircle className="spin" size={16} /> : <FileCheck2 size={16} />} Importar y generar libro
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SiiFileSlot({ label, hint, file, inputRef, busy, onSelect }: {
+  label: string;
+  hint: string;
+  file: SiiRcvFile | null;
+  inputRef: RefObject<HTMLInputElement | null>;
+  busy: boolean;
+  onSelect: (file?: File) => void;
+}) {
+  return <div className={`sii-file-slot ${file ? "loaded" : ""}`} onClick={() => inputRef.current?.click()}>
+    <input ref={inputRef} type="file" accept=".csv,text/csv" hidden onChange={(event) => onSelect(event.target.files?.[0])} />
+    <FileSpreadsheet size={20} />
+    <span><b>{file ? file.filename : label}</b><small>{file ? `${file.documents.length} documentos reconocidos` : hint}</small></span>
+    <button type="button" className="button secondary" disabled={busy}>{file ? "Cambiar" : "Seleccionar"}</button>
+  </div>;
 }
 
 function ImportModal({

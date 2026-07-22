@@ -1,0 +1,89 @@
+import Papa from "papaparse";
+import type { RcvDocument } from "./types";
+
+const documentTypes: Record<number, string> = {
+  33: "Factura electrónica",
+  34: "Factura exenta electrónica",
+  39: "Boleta electrónica",
+  41: "Boleta exenta electrónica",
+  46: "Factura de compra",
+  52: "Guía de despacho",
+  56: "Nota de débito",
+  61: "Nota de crédito",
+};
+
+type SiiRow = Record<string, string>;
+
+export type SiiRcvFile = {
+  direction: "purchase" | "sale";
+  documents: Omit<RcvDocument, "id" | "companyId" | "snapshotId" | "allocatedAmount" | "status">[];
+  filename: string;
+};
+
+export async function parseSiiRcvFile(file: File, period: string): Promise<SiiRcvFile> {
+  const text = await file.text();
+  const parsed = Papa.parse<SiiRow>(text, {
+    header: true,
+    skipEmptyLines: true,
+    delimiter: ";",
+    transformHeader: (header) => header.trim(),
+  });
+  if (parsed.errors.length)
+    throw new Error(`El CSV ${file.name} no se pudo leer como archivo SII.`);
+  const rows = parsed.data.filter((row) => Object.values(row).some(Boolean));
+  if (!rows.length) throw new Error(`${file.name} no contiene documentos.`);
+  const headers = Object.keys(rows[0]);
+  const direction = headers.includes("RUT Proveedor")
+    ? "purchase"
+    : headers.includes("Rut cliente")
+      ? "sale"
+      : null;
+  if (!direction)
+    throw new Error(`${file.name} no corresponde al CSV detallado de Compras o Ventas del SII.`);
+  const required = ["Tipo Doc", "Folio", "Fecha Docto", "Monto Neto"];
+  const missing = required.filter((header) => !headers.includes(header));
+  if (missing.length)
+    throw new Error(`${file.name} no trae las columnas SII requeridas: ${missing.join(", ")}.`);
+  const documents = rows.map((row, index) => normalizeRow(row, direction, period, index));
+  const outOfPeriod = documents.find((document) => document.period !== period);
+  if (outOfPeriod)
+    throw new Error(`${file.name} contiene documentos de ${outOfPeriod.period}, no de ${period}.`);
+  return { direction, documents, filename: file.name };
+}
+
+function normalizeRow(
+  row: SiiRow,
+  direction: "purchase" | "sale",
+  selectedPeriod: string,
+  index: number,
+): SiiRcvFile["documents"][number] {
+  const documentCode = amount(row["Tipo Doc"]);
+  const issuedOn = siiDate(row["Fecha Docto"]);
+  const totalAmount = amount(row[direction === "purchase" ? "Monto Total" : "Monto total"]);
+  if (!documentCode || !row.Folio || !issuedOn || totalAmount <= 0)
+    throw new Error(`Fila ${index + 2}: falta tipo, folio, fecha o monto total válido.`);
+  return {
+    period: issuedOn.slice(0, 7) || selectedPeriod,
+    direction,
+    documentCode,
+    documentType: documentTypes[documentCode] ?? `Documento ${documentCode}`,
+    folio: row.Folio.trim(),
+    counterpartyRut: (row[direction === "purchase" ? "RUT Proveedor" : "Rut cliente"] ?? "").trim(),
+    counterpartyName: (row["Razon Social"] ?? "Sin razón social").trim(),
+    issuedOn,
+    exemptAmount: amount(row["Monto Exento"]),
+    netAmount: amount(row["Monto Neto"]),
+    vatAmount: amount(row[direction === "purchase" ? "Monto IVA Recuperable" : "Monto IVA"]),
+    totalAmount,
+  };
+}
+
+function amount(value: string | undefined) {
+  const parsed = Number(String(value ?? "0").replace(/[^0-9-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function siiDate(value: string | undefined) {
+  const match = String(value ?? "").match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  return match ? `${match[3]}-${match[2].padStart(2, "0")}-${match[1].padStart(2, "0")}` : "";
+}
