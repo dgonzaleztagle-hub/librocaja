@@ -126,7 +126,23 @@ async function persistResult(
     (result.sales ?? []) as Record<string, unknown>[],
     { companyId, period, direction: "sale", snapshotId: snapshot.id },
   );
-  const rows = [...purchases, ...sales].map((document) => ({
+  // Un CSV importado previamente y una sincronización desde SII representan
+  // los mismos documentos. Conservamos el snapshot como evidencia, pero no
+  // duplicamos líneas del libro al cambiar de fuente.
+  const { data: existingDocuments, error: existingDocumentsError } = await supabase
+    .from("rcv_documents")
+    .select("direction,document_code,folio,counterparty_rut")
+    .eq("company_id", companyId)
+    .eq("period", period);
+  if (existingDocumentsError) throw existingDocumentsError;
+  const fingerprints = new Set(
+    (existingDocuments ?? []).map((document) =>
+      [document.direction, document.document_code, document.folio.trim(), document.counterparty_rut ?? ""].join("|"),
+    ),
+  );
+  const rows = [...purchases, ...sales]
+    .filter((document) => !fingerprints.has([document.direction, document.documentCode, document.folio.trim(), document.counterpartyRut ?? ""].join("|")))
+    .map((document) => ({
     snapshot_id: snapshot.id,
     company_id: companyId,
     period: document.period,
@@ -141,8 +157,8 @@ async function persistResult(
     net_amount: document.netAmount,
     vat_amount: document.vatAmount,
     total_amount: document.totalAmount,
-    status: document.status,
-  }));
+      status: document.status,
+    }));
   if (rows.length) {
     const { error: insertError } = await supabase
       .from("rcv_documents")
