@@ -233,6 +233,7 @@ export async function exportExcel(
   const workbook = new ExcelJS.Workbook();
   workbook.creator = "Caja Clara";
   workbook.created = new Date();
+  const totals = calculateTotals(ledger);
   const sheet = workbook.addWorksheet("Libro Caja", {
     pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1 },
     views: [{ showGridLines: false }],
@@ -328,9 +329,19 @@ export async function exportExcel(
     `SUMIF(D${firstRow}:D${lastRow},2,L${firstRow}:L${lastRow})`,
     `F${sumsRow}-G${sumsRow}`,
   ];
+  const formulaResults = [
+    totals.incomeFlow,
+    totals.expenseFlow,
+    totals.cashBalance,
+    totals.taxableIncome,
+    totals.taxableExpense,
+    totals.netResult,
+  ];
   ["C", "D", "E", "F", "G", "H"].forEach((column, index) => {
     const cell = sheet.getCell(`${column}${sumsRow}`);
-    cell.value = { formula: formulas[index] };
+    // Excel recalcula estas fórmulas, pero guardar también el resultado evita
+    // que C10–C15 aparezcan vacíos al abrir el archivo en un visor previo.
+    cell.value = { formula: formulas[index], result: formulaResults[index] };
     cell.numFmt = "#,##0;[Red]-#,##0";
     cell.font = { bold: true };
   });

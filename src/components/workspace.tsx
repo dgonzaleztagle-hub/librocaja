@@ -707,6 +707,7 @@ export function Workspace({
           totals={totals}
           documents={documents}
           excludedPendingCount={pendingCount}
+          openManual={() => setManualOpen(true)}
           goClose={() => setStage("close")}
         />
       )}
@@ -925,6 +926,7 @@ function Review({
   totals,
   documents,
   excludedPendingCount,
+  openManual,
   goClose,
 }: {
   company: Company;
@@ -933,6 +935,7 @@ function Review({
   totals: ReturnType<typeof calculateTotals>;
   documents: RcvDocument[];
   excludedPendingCount: number;
+  openManual: () => void;
   goClose: () => void;
 }) {
   const [exportOpen, setExportOpen] = useState(false);
@@ -945,6 +948,9 @@ function Review({
           <p>Columnas C1–C9 y totales exigidos por el formato SII.</p>
         </div>
         <div className="stage-actions">
+          <button className="button secondary" onClick={openManual}>
+            <Plus size={16} /> Agregar movimiento
+          </button>
           <div className={`export-menu ${exportOpen ? "open" : ""}`}>
             <button className="button secondary" onClick={() => setExportOpen((open) => !open)} aria-expanded={exportOpen}>
               <Download size={16} /> Exportar borrador <ChevronDown size={14} />
@@ -1771,7 +1777,7 @@ function ManualModal({
           <div>
             <p className="eyebrow">Flujo sin cartola</p>
             <h2>Movimiento manual</h2>
-            <p>Registra caja, aportes, retiros u otros movimientos.</p>
+            <p>Agrega al libro pagos de IVA, PPM, saldos o cualquier flujo sin RCV.</p>
           </div>
           <button className="modal-close" onClick={onClose}>
             ×
@@ -1807,6 +1813,9 @@ function ManualModal({
           <label>
             Categoría
             <select name="category">
+              <option value="tax">Pago de IVA</option>
+              <option value="tax">Pago de PPM</option>
+              <option value="other">Saldo o ajuste de caja</option>
               <option value="other">Otro flujo</option>
               <option value="loan">Préstamo</option>
               <option value="capital_contribution">Aporte de capital</option>
