@@ -1423,7 +1423,7 @@ function SiiFileSlot({ label, hint, file, inputRef, busy, onSelect }: {
   return <div className={`sii-file-slot ${file ? "loaded" : ""}`} onClick={() => inputRef.current?.click()}>
     <input ref={inputRef} type="file" accept=".csv,text/csv" hidden onChange={(event) => onSelect(event.target.files?.[0])} />
     <FileSpreadsheet size={20} />
-    <span><b>{file ? file.filename : label}</b><small>{file ? `${file.documents.length} documentos reconocidos` : hint}</small></span>
+    <span><b>{file ? file.filename : label}</b><small>{file ? `${file.documents.length} documentos reconocidos${file.skipped ? ` · ${file.skipped} sin monto omitidos` : ""}` : hint}</small></span>
     <button type="button" className="button secondary" disabled={busy}>{file ? "Cambiar" : "Seleccionar"}</button>
   </div>;
 }

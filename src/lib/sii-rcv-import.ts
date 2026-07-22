@@ -18,6 +18,7 @@ export type SiiRcvFile = {
   direction: "purchase" | "sale";
   documents: Omit<RcvDocument, "id" | "companyId" | "snapshotId" | "allocatedAmount" | "status">[];
   filename: string;
+  skipped: number;
 };
 
 export async function parseSiiRcvFile(file: File, period: string): Promise<SiiRcvFile> {
@@ -44,11 +45,14 @@ export async function parseSiiRcvFile(file: File, period: string): Promise<SiiRc
   const missing = required.filter((header) => !headers.includes(header));
   if (missing.length)
     throw new Error(`${file.name} no trae las columnas SII requeridas: ${missing.join(", ")}.`);
-  const documents = rows.map((row, index) => normalizeRow(row, direction, period, index));
+  const documents = rows
+    .map((row, index) => normalizeRow(row, direction, period, index))
+    .filter((document): document is SiiRcvFile["documents"][number] => document !== null);
+  if (!documents.length) throw new Error(`${file.name} no contiene documentos con monto total válido.`);
   const outOfPeriod = documents.find((document) => document.period !== period);
   if (outOfPeriod)
     throw new Error(`${file.name} contiene documentos de ${outOfPeriod.period}, no de ${period}.`);
-  return { direction, documents, filename: file.name };
+  return { direction, documents, filename: file.name, skipped: rows.length - documents.length };
 }
 
 function normalizeRow(
@@ -56,12 +60,15 @@ function normalizeRow(
   direction: "purchase" | "sale",
   selectedPeriod: string,
   index: number,
-): SiiRcvFile["documents"][number] {
+): SiiRcvFile["documents"][number] | null {
   const documentCode = amount(row["Tipo Doc"]);
   const issuedOn = siiDate(row["Fecha Docto"]);
   const totalAmount = amount(row[direction === "purchase" ? "Monto Total" : "Monto total"]);
-  if (!documentCode || !row.Folio || !issuedOn || totalAmount <= 0)
-    throw new Error(`Fila ${index + 2}: falta tipo, folio, fecha o monto total válido.`);
+  if (!documentCode || !row.Folio || !issuedOn)
+    throw new Error(`Fila ${index + 2}: falta tipo, folio o fecha válida.`);
+  // SII puede incluir registros informativos sin monto. No son una operación
+  // de caja y se omiten para cumplir la validación C8 > 0.
+  if (totalAmount <= 0) return null;
   return {
     period: issuedOn.slice(0, 7) || selectedPeriod,
     direction,
