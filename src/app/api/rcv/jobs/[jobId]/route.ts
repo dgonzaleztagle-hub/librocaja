@@ -54,7 +54,7 @@ export async function GET(
         error:
           error instanceof Error
             ? error.message
-            : "No se pudo consultar la extracción",
+            : safeErrorMessage(error),
       },
       { status: 400 },
     );
@@ -68,19 +68,23 @@ async function persistResult(
 ) {
   const period = String(result.period);
   const payloadHash = String(result.payload_sha256);
-  const { data: existing } = await supabase
+  const { data: existing, error: existingError } = await supabase
     .from("rcv_snapshots")
     .select("id")
     .eq("company_id", companyId)
     .eq("period", period)
     .eq("payload_sha256", payloadHash)
     .maybeSingle();
+  // PostgREST devuelve errores como objetos simples, no como Error. No los
+  // silenciemos: de otro modo la extracción parece fallar sin explicación.
+  if (existingError) throw new Error(safeErrorMessage(existingError));
   if (existing) return existing.id;
-  const { count } = await supabase
+  const { count, error: countError } = await supabase
     .from("rcv_snapshots")
     .select("id", { count: "exact", head: true })
     .eq("company_id", companyId)
     .eq("period", period);
+  if (countError) throw new Error(safeErrorMessage(countError));
   const { data: snapshot, error } = await supabase
     .from("rcv_snapshots")
     .insert({
@@ -126,4 +130,13 @@ async function persistResult(
     if (insertError) throw insertError;
   }
   return snapshot.id;
+}
+
+function safeErrorMessage(error: unknown) {
+  if (typeof error === "string") return error;
+  try {
+    return JSON.stringify(error);
+  } catch {
+    return "No se pudo consultar la extracción";
+  }
 }
