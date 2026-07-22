@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { BookOpenText, Building2, CircleHelp, LogOut, Settings } from "lucide-react";
+import { BookOpenText, Building2 } from "lucide-react";
 
 export function AppShell({ children, active = "portfolio" }: { children: React.ReactNode; active?: "portfolio" | "workspace" }) {
   return (
@@ -12,15 +12,8 @@ export function AppShell({ children, active = "portfolio" }: { children: React.R
         <nav className="topnav" aria-label="Navegación principal">
           <Link href="/cartera" className={active === "portfolio" ? "active" : ""}><Building2 size={16} /> Cartera</Link>
         </nav>
-        <div className="top-actions">
-          <button className="icon-button" aria-label="Ayuda"><CircleHelp size={18} /></button>
-          <button className="icon-button" aria-label="Configuración"><Settings size={18} /></button>
-          <span className="user-chip"><span>DG</span><b>Contador</b></span>
-          <a className="icon-button" href="/auth/signout" aria-label="Cerrar sesión"><LogOut size={17} /></a>
-        </div>
       </header>
       {children}
     </div>
   );
 }
-

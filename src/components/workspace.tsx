@@ -111,6 +111,12 @@ export function Workspace({
     (movement) => !movement.reconciled && !movement.excluded,
   ).length;
 
+  function changePeriod(offset: number) {
+    const [year, month] = period.split("-").map(Number);
+    const next = new Date(year, month - 1 + offset, 1);
+    router.push(`/empresa/${company.id}/${next.getFullYear()}-${String(next.getMonth() + 1).padStart(2, "0")}`);
+  }
+
   async function syncRcv() {
     setSyncing(true);
     setSyncProgress(12);
@@ -339,7 +345,7 @@ export function Workspace({
           </div>
         </div>
         <div className="period-picker">
-          <button aria-label="Período anterior">
+          <button aria-label="Período anterior" onClick={() => changePeriod(-1)}>
             <ArrowLeft size={15} />
           </button>
           <span>
@@ -347,7 +353,7 @@ export function Workspace({
             <b>{periodLabel(period)}</b>
             <small>Período de trabajo</small>
           </span>
-          <button aria-label="Período siguiente">
+          <button aria-label="Período siguiente" onClick={() => changePeriod(1)}>
             <ArrowRight size={15} />
           </button>
         </div>
@@ -408,6 +414,7 @@ export function Workspace({
           syncProgress={syncProgress}
           syncRcv={syncRcv}
           openSettings={() => setSettingsOpen(true)}
+          openManual={() => setManualOpen(true)}
           openImport={() => setImportOpen(true)}
         />
       )}
@@ -754,6 +761,7 @@ function Sources({
   syncProgress,
   syncRcv,
   openSettings,
+  openManual,
   openImport,
 }: {
   company: Company;
@@ -762,6 +770,7 @@ function Sources({
   syncProgress: number;
   syncRcv: () => void;
   openSettings: () => void;
+  openManual: () => void;
   openImport: () => void;
 }) {
   return (
@@ -865,7 +874,7 @@ function Sources({
               )}
             </b>
           </div>
-          <button className="button secondary wide">
+          <button className="button secondary wide" onClick={openManual}>
             <Plus size={16} /> Agregar movimiento
           </button>
         </article>
@@ -1431,7 +1440,9 @@ function ImportModal({
             )}
             <b>Arrastra una cartola o selecciónala</b>
             <span>CSV, XLSX o XLS · máximo 10 MB</span>
-            <button className="button secondary">Seleccionar archivo</button>
+            <button type="button" className="button secondary" onClick={() => fileRef.current?.click()}>
+              Seleccionar archivo
+            </button>
           </div>
         ) : (
           <>

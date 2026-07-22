@@ -9,7 +9,6 @@ import {
   KeyRound,
   Plus,
   Search,
-  SlidersHorizontal,
 } from "lucide-react";
 import { periodLabel } from "@/lib/format";
 import type { Company } from "@/lib/types";
@@ -83,9 +82,6 @@ export function Portfolio({
           </label>
           <div className="toolbar-right">
             <span>{filtered.length} empresas</span>
-            <button className="button ghost">
-              <SlidersHorizontal size={16} /> Filtrar
-            </button>
           </div>
         </div>
         <div className="portfolio-table-wrap">
