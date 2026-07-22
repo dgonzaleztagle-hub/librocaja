@@ -175,7 +175,10 @@ async function findExistingSnapshot(
 }
 
 function legacySnapshotPeriod(period: string) {
-  return `\\${period.split("-").map((part) => "d".repeat(part.length)).join("-")}`;
+  return period
+    .split("-")
+    .map((part) => `\\${"d".repeat(part.length)}`)
+    .join("-");
 }
 
 function safeErrorMessage(error: unknown) {
