@@ -7,6 +7,7 @@ const documentTypes: Record<number, string> = {
   39: "Boleta electrónica",
   41: "Boleta exenta electrónica",
   46: "Factura de compra",
+  48: "Comprobantes de pago electrónico",
   52: "Guía de despacho",
   56: "Nota de débito",
   61: "Nota de crédito",

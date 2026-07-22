@@ -255,7 +255,8 @@ export async function exportExcel(
   sheet.getCell("C2").font = { name: "Calibri", size: 11, bold: true };
   sheet.getCell("C2").alignment = { horizontal: "center", vertical: "middle", wrapText: true };
   sheet.getRow(2).height = 32;
-  addMergedLabel(sheet, "C4:D4", "PERÍODO", period, "E4:L4");
+  addMergedLabel(sheet, "C4:D4", "PERÍODO", asExcelDate(`${period}-01`), "E4:L4");
+  sheet.getCell("E4").numFmt = "mmmm yyyy";
   addMergedLabel(sheet, "C6:D6", "RUT", company.rut, "E6:L6");
   addMergedLabel(sheet, "C8:D8", "NOMBRE/RAZÓN SOCIAL", company.name, "E8:L8");
 
@@ -334,16 +335,15 @@ export async function exportExcel(
     cell.font = { bold: true };
   });
   applyOfficialBorders(sheet, 2, sumsRow, lastRow, totalsStart);
-  const footnoteRow = sumsRow + 2;
-  sheet.getCell(`C${footnoteRow}`).value = `Estado: ${status} · Versión ${version} · Generado ${new Date().toLocaleString("es-CL")}`;
-  sheet.mergeCells(`C${footnoteRow}:H${footnoteRow}`);
-  sheet.getCell(`C${footnoteRow}`).font = { italic: true, size: 9, color: { argb: "FF66736D" } };
+  // Anexo 3 no incorpora leyendas de estado ni metadatos dentro del cuerpo
+  // del libro. La trazabilidad se conserva en la aplicación y el nombre del
+  // archivo, manteniendo el Excel idéntico al formato publicado por el SII.
 
   const buffer = await workbook.xlsx.writeBuffer();
   download(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `${filename(company, period, "anexo-3", version)}.xlsx`);
 }
 
-function addMergedLabel(sheet: ExcelJS.Worksheet, labelRange: string, label: string, value: string, valueRange?: string) {
+function addMergedLabel(sheet: ExcelJS.Worksheet, labelRange: string, label: string, value: string | Date, valueRange?: string) {
   sheet.mergeCells(labelRange);
   const labelCell = sheet.getCell(labelRange.split(":")[0]);
   labelCell.value = label;
