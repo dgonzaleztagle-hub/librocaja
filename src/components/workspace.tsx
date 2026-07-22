@@ -910,6 +910,7 @@ function Review({
   excludedPendingCount: number;
   goClose: () => void;
 }) {
+  const [exportOpen, setExportOpen] = useState(false);
   return (
     <section className="content-stage review-stage">
       <div className="stage-title-row">
@@ -919,24 +920,24 @@ function Review({
           <p>Columnas C1–C9 y totales exigidos por el formato SII.</p>
         </div>
         <div className="stage-actions">
-          <div className="export-menu">
-            <button className="button secondary">
+          <div className={`export-menu ${exportOpen ? "open" : ""}`}>
+            <button className="button secondary" onClick={() => setExportOpen((open) => !open)} aria-expanded={exportOpen}>
               <Download size={16} /> Exportar borrador <ChevronDown size={14} />
             </button>
             <div className="export-popover">
               <button
-                onClick={() => exportExcel(company, period, ledger, documents)}
+                onClick={() => { exportExcel(company, period, ledger, documents); setExportOpen(false); }}
               >
                 Excel completo
               </button>
-              <button onClick={() => exportPdf(company, period, ledger)}>
+              <button onClick={() => { exportPdf(company, period, ledger); setExportOpen(false); }}>
                 PDF detallado
               </button>
-              <button onClick={() => exportCsv(company, period, ledger)}>
+              <button onClick={() => { exportCsv(company, period, ledger); setExportOpen(false); }}>
                 CSV detallado
               </button>
               <button
-                onClick={() => exportCsv(company, period, ledger, 1, "daily")}
+                onClick={() => { exportCsv(company, period, ledger, 1, "daily"); setExportOpen(false); }}
               >
                 CSV resumen diario
               </button>
