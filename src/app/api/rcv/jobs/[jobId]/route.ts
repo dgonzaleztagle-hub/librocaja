@@ -46,9 +46,14 @@ export async function GET(
         job.result as Record<string, unknown>,
       );
     return NextResponse.json(job);
-  } catch {
+  } catch (error) {
     return NextResponse.json(
-      { error: "No se pudo consultar la extracción" },
+      {
+        error:
+          error instanceof Error
+            ? error.message
+            : "No se pudo consultar la extracción",
+      },
       { status: 400 },
     );
   }
