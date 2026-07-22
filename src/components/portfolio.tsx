@@ -9,6 +9,7 @@ import {
   KeyRound,
   Plus,
   Search,
+  Trash2,
 } from "lucide-react";
 import { periodLabel } from "@/lib/format";
 import type { Company } from "@/lib/types";
@@ -22,6 +23,9 @@ export function Portfolio({
   const [query, setQuery] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [companies, setCompanies] = useState(initialCompanies);
+  const [companyToDelete, setCompanyToDelete] = useState<Company | null>(null);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState("");
   const filtered = useMemo(
     () =>
       companies.filter((company) =>
@@ -55,6 +59,26 @@ export function Portfolio({
       return;
     }
     setDialogOpen(false);
+  }
+
+  async function deleteCompany() {
+    if (!companyToDelete) return;
+    setDeleting(true);
+    setDeleteError("");
+    try {
+      const response = await fetch(`/api/companies/${companyToDelete.id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) throw new Error("delete failed");
+      setCompanies((current) =>
+        current.filter((company) => company.id !== companyToDelete.id),
+      );
+      setCompanyToDelete(null);
+    } catch {
+      setDeleteError("No se pudo eliminar. Intenta nuevamente.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   return (
@@ -94,6 +118,7 @@ export function Portfolio({
                 <th>Estado</th>
                 <th>Próxima acción</th>
                 <th aria-label="Abrir" />
+                <th aria-label="Eliminar" />
               </tr>
             </thead>
             <tbody>
@@ -119,6 +144,16 @@ export function Portfolio({
                           <small>{company.rut}</small>
                         </span>
                       </Link>
+                    </td>
+                    <td>
+                      <button
+                        className="row-delete"
+                        aria-label={`Eliminar ${company.name}`}
+                        title={`Eliminar ${company.name}`}
+                        onClick={() => setCompanyToDelete(company)}
+                      >
+                        <Trash2 size={16} />
+                      </button>
                     </td>
                     <td>
                       <span className="regime-label">
@@ -250,6 +285,33 @@ export function Portfolio({
                 <button className="button primary">Crear empresa</button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {companyToDelete && (
+        <div className="modal-backdrop" onMouseDown={() => !deleting && setCompanyToDelete(null)}>
+          <div className="modal-card compact" role="dialog" aria-modal="true" aria-labelledby="delete-company" onMouseDown={(event) => event.stopPropagation()}>
+            <div className="modal-header">
+              <div>
+                <p className="eyebrow">Acción irreversible</p>
+                <h2 id="delete-company">Eliminar empresa</h2>
+                <p>Se eliminará <b>{companyToDelete.name}</b> y todos sus datos de Caja Clara.</p>
+              </div>
+              <button className="modal-close" aria-label="Cancelar" disabled={deleting} onClick={() => setCompanyToDelete(null)}>×</button>
+            </div>
+            <div className="form-stack">
+              <div className="delete-warning">
+                Incluye credencial SII cifrada, cuentas, RCV, cartolas, movimientos, conciliaciones y cierres. No afecta PlusContable.
+              </div>
+              {deleteError && <span className="login-error">{deleteError}</span>}
+              <div className="modal-actions">
+                <button type="button" className="button secondary" disabled={deleting} onClick={() => setCompanyToDelete(null)}>Cancelar</button>
+                <button type="button" className="button danger" disabled={deleting} onClick={deleteCompany}>
+                  <Trash2 size={16} /> {deleting ? "Eliminando…" : "Eliminar definitivamente"}
+                </button>
+              </div>
+            </div>
           </div>
         </div>
       )}
