@@ -3,7 +3,9 @@ import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { normalizeRcvDocuments } from "@/lib/rcv";
 
-const paramsSchema = z.object({ jobId: z.string().uuid() });
+// El scraper puede generar IDs válidos para su propia cola; no imponer aquí
+// el formato UUID de Supabase antes de consultar el trabajo remoto.
+const paramsSchema = z.object({ jobId: z.string().trim().min(1).max(128) });
 
 export async function GET(
   request: Request,
