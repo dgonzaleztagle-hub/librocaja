@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireUser, createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import { assertPeriodOpen } from "@/lib/closure";
 
 const rowSchema = z.object({
@@ -25,7 +25,6 @@ const schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    await requireUser();
     const input = schema.parse(await request.json());
     const supabase = await createClient();
     for (const period of new Set(input.rows.map((row) => row.period)))

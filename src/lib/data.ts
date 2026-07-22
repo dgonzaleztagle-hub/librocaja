@@ -1,6 +1,6 @@
 import "server-only";
 import { demoCompanies, demoDocuments, demoMovements } from "./demo-data";
-import { createClient, requireUser } from "./supabase/server";
+import { createClient } from "./supabase/server";
 import type { CashMovement, Company, RcvDocument } from "./types";
 
 const isConfigured = () =>
@@ -12,12 +12,10 @@ const isConfigured = () =>
 export async function listCompanies(): Promise<Company[]> {
   if (!isConfigured()) return demoCompanies;
   try {
-    const user = await requireUser();
     const supabase = await createClient();
     const { data, error } = await supabase
       .from("companies")
       .select("*, cash_accounts(*), sii_credentials(company_id)")
-      .eq("owner_id", user.id)
       .order("name");
     if (error) throw error;
     return (data ?? []).map((row) => ({
@@ -72,7 +70,6 @@ export async function getWorkspace(
         }
       : null;
   }
-  await requireUser();
   const supabase = await createClient();
   const [
     { data: companyRow },

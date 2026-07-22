@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireUser, createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import { assertPeriodOpen } from "@/lib/closure";
 import { decryptSecret } from "@/lib/encryption";
 
@@ -11,7 +11,6 @@ const schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    await requireUser();
     const input = schema.parse(await request.json());
     const supabase = await createClient();
     await assertPeriodOpen(supabase, input.companyId, input.period);

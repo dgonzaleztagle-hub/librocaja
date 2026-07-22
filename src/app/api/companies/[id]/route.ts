@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { createClient, requireUser } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 
 export async function DELETE(
   _request: Request,
@@ -7,7 +7,6 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    const user = await requireUser();
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL)
       return NextResponse.json({ ok: true });
 
@@ -15,8 +14,7 @@ export async function DELETE(
     const { error } = await supabase
       .from("companies")
       .delete()
-      .eq("id", id)
-      .eq("owner_id", user.id);
+      .eq("id", id);
     if (error) throw error;
     return NextResponse.json({ ok: true });
   } catch {

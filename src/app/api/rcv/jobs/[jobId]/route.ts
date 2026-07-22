@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireUser, createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import { normalizeRcvDocuments } from "@/lib/rcv";
 
 const paramsSchema = z.object({ jobId: z.string().uuid() });
@@ -10,7 +10,6 @@ export async function GET(
   { params }: { params: Promise<{ jobId: string }> },
 ) {
   try {
-    await requireUser();
     const { jobId } = paramsSchema.parse(await params);
     const companyId = new URL(request.url).searchParams.get("companyId");
     if (!companyId)

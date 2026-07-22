@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireUser, createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 
 const schema = z.object({
   name: z.string().trim().min(2).max(160),
@@ -10,7 +10,6 @@ const schema = z.object({
 
 export async function POST(request: Request) {
   try {
-    const user = await requireUser();
     const body = schema.parse(await request.json());
     if (!process.env.NEXT_PUBLIC_SUPABASE_URL)
       return NextResponse.json(
@@ -32,7 +31,7 @@ export async function POST(request: Request) {
         name: body.name,
         rut: body.rut,
         regime: body.regime,
-        owner_id: user.id,
+        owner_id: "libro-caja-private",
       })
       .select()
       .single();

@@ -1,11 +1,10 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
-import { requireUser, createClient } from "@/lib/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 
 const schema = z.object({ name: z.string().trim().min(2).max(100), kind: z.enum(["bank", "cash"]), bank: z.string().trim().max(100).optional(), numberLast4: z.string().regex(/^\d{0,4}$/).optional(), openingBalance: z.number().int() });
 export async function POST(request: Request, { params }: { params: Promise<{ id: string }> }) {
   try {
-    await requireUser();
     const { id } = await params;
     const input = schema.parse(await request.json());
     const supabase = await createClient();
