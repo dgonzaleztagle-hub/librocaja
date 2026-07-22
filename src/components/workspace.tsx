@@ -145,7 +145,11 @@ export function Workspace({
           // no invalida la extracción. Reintentamos y sólo mostramos error
           // cuando se agota el plazo completo de la operación.
           let statusResponse: Response;
-          let job: Record<string, unknown>;
+          let job: {
+            status?: string;
+            progress?: number;
+            error?: { message?: string } | string;
+          };
           try {
             statusResponse = await fetch(
               `/api/rcv/jobs/${jobId}?companyId=${company.id}`,
@@ -157,7 +161,11 @@ export function Workspace({
             throw pollError;
           }
           if (!statusResponse.ok)
-            throw new Error(String(job.error ?? "No se pudo consultar la extracción"));
+            throw new Error(
+              typeof job.error === "object"
+                ? job.error?.message ?? "No se pudo consultar la extracción"
+                : job.error ?? "No se pudo consultar la extracción",
+            );
           setSyncProgress(Number(job.progress ?? 0));
           if (job.status === "succeeded") {
             setSyncing(false);
@@ -165,7 +173,11 @@ export function Workspace({
             return;
           }
           if (job.status === "failed")
-            throw new Error(job.error?.message ?? "sync failed");
+            throw new Error(
+              typeof job.error === "object"
+                ? job.error?.message ?? "sync failed"
+                : job.error ?? "sync failed",
+            );
         }
         throw new Error("sync timeout");
       } catch (error) {
