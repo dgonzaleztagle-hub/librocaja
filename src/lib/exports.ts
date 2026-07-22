@@ -14,7 +14,7 @@ function filename(
   return `libro-caja_${safeFilenamePart(company.rut)}_${period}_${format}_v${version}`;
 }
 
-export async function exportExcel(
+async function exportLegacyExcel(
   company: Company,
   period: string,
   rows: LedgerRow[],
@@ -218,6 +218,168 @@ export async function exportExcel(
     }),
     `${filename(company, period, "completo", version)}.xlsx`,
   );
+}
+
+void exportLegacyExcel;
+
+export async function exportExcel(
+  company: Company,
+  period: string,
+  _ledger: LedgerRow[],
+  documents: RcvDocument[],
+  version = 1,
+  status = "BORRADOR",
+) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = "Caja Clara";
+  workbook.created = new Date();
+  const sheet = workbook.addWorksheet("Libro Caja", {
+    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1 },
+    views: [{ showGridLines: false }],
+  });
+  const records = documents
+    .filter((document) => document.period === period)
+    .sort((a, b) => a.issuedOn.localeCompare(b.issuedOn) || a.folio.localeCompare(b.folio))
+    .map((document, index) => ({
+      correlation: index + 1,
+      operation: document.direction === "sale" ? 1 : 2,
+      folio: document.folio,
+      type: document.documentType,
+      issuerRut: document.direction === "sale" ? company.rut : document.counterpartyRut,
+      issuedOn: document.issuedOn,
+      description: `${document.direction === "sale" ? "Venta" : "Compra"} RCV · ${document.counterpartyName}`,
+      total: document.totalAmount,
+      taxable: document.netAmount,
+    }));
+
+  sheet.columns = [2.3, 2.3, 15.8, 17.6, 14.3, 12.8, 12.3, 13, 14.3, 17.8, 19.5, 18, 2.9].map((width) => ({ width }));
+  sheet.mergeCells("C2:M2");
+  sheet.getCell("C2").value = "ANEXO 3. LIBRO DE CAJA CONTRIBUYENTES ACOGIDOS AL RÉGIMEN DEL ARTÍCULO 14 LETRA D) DEL N°3 Y N°8 LETRA (a) DE LA LEY SOBRE IMPUESTO A LA RENTA";
+  sheet.getCell("C2").font = { name: "Calibri", size: 11, bold: true };
+  sheet.getCell("C2").alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  sheet.getRow(2).height = 32;
+  addMergedLabel(sheet, "C4:D4", "PERÍODO", period, "E4:L4");
+  addMergedLabel(sheet, "C6:D6", "RUT", company.rut, "E6:L6");
+  addMergedLabel(sheet, "C8:D8", "NOMBRE/RAZÓN SOCIAL", company.name, "E8:L8");
+
+  sheet.mergeCells("C10:L10");
+  sheet.getCell("C10").value = "REGISTRO DE OPERACIONES";
+  sheet.getCell("C10").font = { bold: true, size: 10 };
+  sheet.getCell("C10").alignment = { horizontal: "center" };
+  const headers = ["N° CORRELATIVO", "TIPO OPERACIÓN (FLUJO INGRESO = 1; FLUJO EGRESO = 2)", "N° DE DOCUMENTO", "TIPO DOCUMENTO", "RUT EMISOR", "FECHA OPERACIÓN", "GLOSA DE OPERACIÓN", "MONTO TOTAL FLUJO DE INGRESO O EGRESO", "MONTO QUE AFECTA LA BASE IMPONIBLE"];
+  const headerColumns = ["C", "D", "E", "F", "G", "H", "I", "K", "L"];
+  for (let i = 0; i < headers.length; i += 1) {
+    const column = headerColumns[i];
+    const range = column === "I" ? "I11:J12" : `${column}11:${column}12`;
+    sheet.mergeCells(range);
+    const cell = sheet.getCell(`${column}11`);
+    cell.value = headers[i];
+    cell.font = { bold: true, size: 9 };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+  }
+  sheet.getRow(11).height = 56;
+  const codes = ["C1", "C2", "C3", "C4", "C5", "C6", "C7", "C8", "C9"];
+  headerColumns.forEach((column, index) => {
+    const cell = sheet.getCell(`${column}13`);
+    cell.value = codes[index];
+    cell.alignment = { horizontal: "center" };
+  });
+
+  const firstRow = 14;
+  const lastRow = Math.max(firstRow, firstRow + records.length - 1);
+  records.forEach((record, index) => {
+    const row = firstRow + index;
+    sheet.mergeCells(`I${row}:J${row}`);
+    sheet.getCell(`C${row}`).value = record.correlation;
+    sheet.getCell(`D${row}`).value = record.operation;
+    sheet.getCell(`E${row}`).value = record.folio;
+    sheet.getCell(`F${row}`).value = record.type;
+    sheet.getCell(`G${row}`).value = record.issuerRut;
+    sheet.getCell(`H${row}`).value = asExcelDate(record.issuedOn);
+    sheet.getCell(`H${row}`).numFmt = "dd-mm-yyyy";
+    sheet.getCell(`I${row}`).value = record.description;
+    sheet.getCell(`K${row}`).value = record.total;
+    sheet.getCell(`L${row}`).value = record.taxable;
+  });
+  for (let row = firstRow; row <= lastRow; row += 1) styleOperationRow(sheet, row);
+
+  const totalsStart = lastRow + 4;
+  sheet.mergeCells(`C${totalsStart}:H${totalsStart}`);
+  sheet.getCell(`C${totalsStart}`).value = "SALDOS Y TOTALES LIBRO DE CAJA";
+  sheet.getCell(`C${totalsStart}`).font = { bold: true, size: 12 };
+  sheet.getCell(`C${totalsStart}`).alignment = { horizontal: "center" };
+  sheet.mergeCells(`C${totalsStart + 1}:E${totalsStart + 1}`);
+  sheet.mergeCells(`F${totalsStart + 1}:H${totalsStart + 1}`);
+  sheet.getCell(`C${totalsStart + 1}`).value = "FLUJO DE INGRESOS Y EGRESOS";
+  sheet.getCell(`F${totalsStart + 1}`).value = "MONTOS QUE AFECTAN LA BASE IMPONIBLE";
+  sheet.getCell(`C${totalsStart + 1}`).font = sheet.getCell(`F${totalsStart + 1}`).font = { bold: true, size: 9 };
+  sheet.getCell(`C${totalsStart + 1}`).alignment = sheet.getCell(`F${totalsStart + 1}`).alignment = { horizontal: "center" };
+  const totalLabels = ["TOTAL MONTO FLUJO DE INGRESOS", "TOTAL MONTO FLUJO DE EGRESOS", "SALDO FLUJO DE CAJA", "INGRESOS", "EGRESOS", "RESULTADO NETO"];
+  const totalCodes = ["C10", "C11", "C12", "C13", "C14", "C15"];
+  ["C", "D", "E", "F", "G", "H"].forEach((column, index) => {
+    sheet.getCell(`${column}${totalsStart + 2}`).value = totalLabels[index];
+    sheet.getCell(`${column}${totalsStart + 2}`).font = { bold: true, size: 9 };
+    sheet.getCell(`${column}${totalsStart + 3}`).value = totalCodes[index];
+  });
+  const sumsRow = totalsStart + 4;
+  const formulas = [
+    `SUMIF(D${firstRow}:D${lastRow},1,K${firstRow}:K${lastRow})`,
+    `SUMIF(D${firstRow}:D${lastRow},2,K${firstRow}:K${lastRow})`,
+    `C${sumsRow}-D${sumsRow}`,
+    `SUMIF(D${firstRow}:D${lastRow},1,L${firstRow}:L${lastRow})`,
+    `SUMIF(D${firstRow}:D${lastRow},2,L${firstRow}:L${lastRow})`,
+    `F${sumsRow}-G${sumsRow}`,
+  ];
+  ["C", "D", "E", "F", "G", "H"].forEach((column, index) => {
+    const cell = sheet.getCell(`${column}${sumsRow}`);
+    cell.value = { formula: formulas[index] };
+    cell.numFmt = "#,##0;[Red]-#,##0";
+    cell.font = { bold: true };
+  });
+  applyOfficialBorders(sheet, 2, sumsRow, lastRow, totalsStart);
+  const footnoteRow = sumsRow + 2;
+  sheet.getCell(`C${footnoteRow}`).value = `Estado: ${status} · Versión ${version} · Generado ${new Date().toLocaleString("es-CL")}`;
+  sheet.mergeCells(`C${footnoteRow}:H${footnoteRow}`);
+  sheet.getCell(`C${footnoteRow}`).font = { italic: true, size: 9, color: { argb: "FF66736D" } };
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  download(new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }), `${filename(company, period, "anexo-3", version)}.xlsx`);
+}
+
+function addMergedLabel(sheet: ExcelJS.Worksheet, labelRange: string, label: string, value: string, valueRange?: string) {
+  sheet.mergeCells(labelRange);
+  const labelCell = sheet.getCell(labelRange.split(":")[0]);
+  labelCell.value = label;
+  labelCell.font = { bold: true, size: 10 };
+  if (!valueRange) return;
+  sheet.mergeCells(valueRange);
+  const valueCell = sheet.getCell(valueRange.split(":")[0]);
+  valueCell.value = value;
+  valueCell.alignment = { vertical: "middle" };
+}
+
+function asExcelDate(value: string) {
+  const [year, month, day] = value.split("-").map(Number);
+  return new Date(year || 1970, (month || 1) - 1, day || 1);
+}
+
+function styleOperationRow(sheet: ExcelJS.Worksheet, row: number) {
+  ["C", "D", "E", "F", "G", "H", "I", "J", "K", "L"].forEach((column) => {
+    const cell = sheet.getCell(`${column}${row}`);
+    cell.alignment = { vertical: "middle", wrapText: column === "I" };
+    if (column === "K" || column === "L") cell.numFmt = "#,##0;[Red]-#,##0";
+  });
+  sheet.getRow(row).height = 24;
+}
+
+function applyOfficialBorders(sheet: ExcelJS.Worksheet, _first: number, totalEnd: number, lastOperation: number, totalsStart: number) {
+  for (let row = 2; row <= totalEnd; row += 1) {
+    for (let column = 3; column <= 12; column += 1) {
+      const cell = sheet.getCell(row, column);
+      const medium = row === 2 || row === 10 || row === 13 || row === lastOperation || row === totalsStart || row === totalEnd;
+      cell.border = { top: { style: medium ? "medium" : "thin" }, bottom: { style: medium ? "medium" : "thin" }, left: { style: "thin" }, right: { style: "thin" } };
+    }
+  }
 }
 
 function addObjectSheet(

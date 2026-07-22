@@ -1,5 +1,6 @@
 import type {
   CashMovement,
+  Company,
   CloseValidation,
   DailySummaryRow,
   LedgerRow,
@@ -27,6 +28,23 @@ export function buildLedger(movements: CashMovement[]): LedgerRow[] {
       flowAmount: Math.abs(movement.amount),
       taxableAmount: Math.abs(movement.taxableAmount),
       movementId: movement.id,
+    }));
+}
+
+export function buildRcvLedger(company: Company, documents: RcvDocument[]): LedgerRow[] {
+  return documents
+    .sort((a, b) => a.issuedOn.localeCompare(b.issuedOn) || a.folio.localeCompare(b.folio))
+    .map((document, index) => ({
+      correlation: index + 1,
+      operationType: document.direction === "sale" ? 1 : 2,
+      documentNumber: document.folio,
+      documentType: document.documentType,
+      issuerRut: document.direction === "sale" ? company.rut : document.counterpartyRut,
+      occurredOn: document.issuedOn,
+      description: `${document.direction === "sale" ? "Venta" : "Compra"} RCV · ${document.counterpartyName}`,
+      flowAmount: document.totalAmount,
+      taxableAmount: document.netAmount,
+      movementId: document.id,
     }));
 }
 

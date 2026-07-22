@@ -9,7 +9,6 @@ import {
   ArrowLeft,
   ArrowRight,
   ArrowUpRight,
-  Banknote,
   CalendarDays,
   Check,
   CheckCircle2,
@@ -43,6 +42,7 @@ import { exportCsv, exportExcel, exportPdf } from "@/lib/exports";
 import { clp, formatDate, periodLabel } from "@/lib/format";
 import {
   buildLedger,
+  buildRcvLedger,
   calculateTotals,
   suggestedTaxableAmount,
   validateClose,
@@ -55,12 +55,11 @@ import type {
 } from "@/lib/types";
 
 const stages = [
-  { id: "sources", label: "Fuentes", caption: "RCV, cartolas y caja", icon: Landmark },
-  { id: "reconcile", label: "Conciliación", caption: "Movimientos y documentos", icon: Link2 },
-  { id: "review", label: "Libro", caption: "Borrador y totales", icon: FileCheck2 },
-  { id: "close", label: "Validación y cierre", caption: "Excepciones y exportación", icon: LockKeyhole },
+  { id: "sources", label: "RCV detallado", caption: "Extraer desde SII", icon: Landmark },
+  { id: "review", label: "Libro Anexo 3", caption: "Detalle y totales", icon: FileCheck2 },
+  { id: "close", label: "Exportar", caption: "Formato oficial", icon: LockKeyhole },
 ] as const;
-type Stage = (typeof stages)[number]["id"];
+type Stage = (typeof stages)[number]["id"] | "reconcile";
 
 export function Workspace({
   company,
@@ -76,7 +75,7 @@ export function Workspace({
   initialClosure: { closed: boolean; version: number };
 }) {
   const router = useRouter();
-  const [stage, setStage] = useState<Stage>("reconcile");
+  const [stage, setStage] = useState<Stage>("sources");
   const [movements, setMovements] = useState<CashMovement[]>(initialMovements);
   const [documents, setDocuments] = useState<RcvDocument[]>(initialDocuments);
   const [selectedMovement, setSelectedMovement] = useState<string | null>(
@@ -96,7 +95,7 @@ export function Workspace({
   const [periodClosed, setPeriodClosed] = useState(initialClosure.closed);
   const [closureVersion, setClosureVersion] = useState(initialClosure.version);
   const [openingConfirmed, setOpeningConfirmed] = useState(true);
-  const ledger = useMemo(() => buildLedger(movements), [movements]);
+  const ledger = useMemo(() => buildRcvLedger(company, documents), [company, documents]);
   const totals = useMemo(() => calculateTotals(ledger), [ledger]);
   const closeValidation = useMemo(
     () =>
@@ -383,9 +382,6 @@ export function Workspace({
               <b>{item.label}</b>
               <small>{item.caption}</small>
             </span>
-            {item.id === "reconcile" && pendingCount > 0 && (
-              <em>{pendingCount}</em>
-            )}
           </button>
           );
         })}
@@ -414,8 +410,7 @@ export function Workspace({
           syncProgress={syncProgress}
           syncRcv={syncRcv}
           openSettings={() => setSettingsOpen(true)}
-          openManual={() => setManualOpen(true)}
-          openImport={() => setImportOpen(true)}
+          documents={documents}
         />
       )}
       {stage === "reconcile" && (
@@ -761,8 +756,7 @@ function Sources({
   syncProgress,
   syncRcv,
   openSettings,
-  openManual,
-  openImport,
+  documents,
 }: {
   company: Company;
   period: string;
@@ -770,8 +764,7 @@ function Sources({
   syncProgress: number;
   syncRcv: () => void;
   openSettings: () => void;
-  openManual: () => void;
-  openImport: () => void;
+  documents: RcvDocument[];
 }) {
   return (
     <section className="content-stage">
@@ -797,15 +790,15 @@ function Sources({
           <p>{company.hasSiiCredential ? `Detalle oficial de compras y ventas de ${periodLabel(period)}.` : "Guarda primero la clave SII de esta empresa. Después podrás extraer el RCV."}</p>
           {company.hasSiiCredential && <div className="source-stats">
             <span>
-              <b>11</b>
+              <b>{documents.filter((document) => document.direction === "sale").length}</b>
               <small>Ventas</small>
             </span>
             <span>
-              <b>8</b>
+              <b>{documents.filter((document) => document.direction === "purchase").length}</b>
               <small>Compras</small>
             </span>
             <span>
-              <b>19</b>
+              <b>{documents.length}</b>
               <small>Documentos</small>
             </span>
           </div>}
@@ -828,64 +821,13 @@ function Sources({
           )}
           {company.hasSiiCredential && <small className="source-note">Luego podrás volver a extraer el RCV cuando lo necesites.</small>}
         </article>
-        <article className="source-card">
-          <div className="source-card-head">
-            <span className="source-icon bank">
-              <Landmark size={20} />
-            </span>
-            <span className="status-pill progress">2 cuentas</span>
-          </div>
-          <h3>Cartolas bancarias</h3>
-          <p>Importa CSV o Excel. Revisarás el mapeo antes de guardar.</p>
-          <div className="account-mini-list">
-            {company.accounts
-              .filter((a) => a.kind === "bank")
-              .map((account) => (
-                <span key={account.id}>
-                  <b>{account.bank}</b>
-                  <small>•••• {account.numberLast4} · 6 movimientos</small>
-                  <CheckCircle2 size={15} />
-                </span>
-              ))}
-          </div>
-          <button className="button primary wide" onClick={openImport}>
-            <Upload size={16} /> Importar cartola
-          </button>
-        </article>
-        <article className="source-card">
-          <div className="source-card-head">
-            <span className="source-icon cash">
-              <Banknote size={20} />
-            </span>
-            <span className="status-pill ok">Activa</span>
-          </div>
-          <h3>Caja y movimientos manuales</h3>
-          <p>
-            Efectivo, aportes, préstamos, retiros y otros flujos sin documento
-            RCV.
-          </p>
-          <div className="cash-balance">
-            <small>Saldo inicial registrado</small>
-            <b>
-              {clp.format(
-                company.accounts
-                  .filter((a) => a.kind === "cash")
-                  .reduce((s, a) => s + a.openingBalance, 0),
-              )}
-            </b>
-          </div>
-          <button className="button secondary wide" onClick={openManual}>
-            <Plus size={16} /> Agregar movimiento
-          </button>
-        </article>
       </div>
       <div className="source-principle">
         <ShieldCheck size={19} />
         <span>
-          <b>Regla de integridad</b>
+          <b>Origen del libro</b>
           <small>
-            La fecha del documento RCV nunca se usa como fecha de caja sin una
-            confirmación de pago o cobro.
+            Cada línea se genera desde el detalle RCV del SII: ventas como flujo 1 y compras como flujo 2. La fecha corresponde a la informada en el RCV.
           </small>
         </span>
       </div>
