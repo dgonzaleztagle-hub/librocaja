@@ -194,3 +194,14 @@ create policy "owner company children jobs" on libro_caja.sync_jobs for all usin
 create policy "owner company children audit" on libro_caja.audit_events for select using (exists(select 1 from libro_caja.companies c where c.id=company_id and c.owner_id=auth.uid()));
 create policy "owner company children audit insert" on libro_caja.audit_events for insert with check (actor_id=auth.uid() and exists(select 1 from libro_caja.companies c where c.id=company_id and c.owner_id=auth.uid()));
 create policy "owner allocations" on libro_caja.allocations for all using (exists(select 1 from libro_caja.cash_movements m join libro_caja.companies c on c.id=m.company_id where m.id=movement_id and c.owner_id=auth.uid())) with check (exists(select 1 from libro_caja.cash_movements m join libro_caja.companies c on c.id=m.company_id where m.id=movement_id and c.owner_id=auth.uid()));
+
+-- El esquema se consume exclusivamente desde Caja Clara. Los privilegios de
+-- tabla complementan las políticas RLS y no afectan las tablas de PlusContable.
+grant select, insert, update, delete on all tables in schema libro_caja
+  to anon, authenticated, service_role;
+grant usage, select on all sequences in schema libro_caja
+  to anon, authenticated, service_role;
+alter default privileges in schema libro_caja
+  grant select, insert, update, delete on tables to anon, authenticated, service_role;
+alter default privileges in schema libro_caja
+  grant usage, select on sequences to anon, authenticated, service_role;
