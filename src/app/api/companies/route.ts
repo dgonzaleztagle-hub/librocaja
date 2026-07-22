@@ -25,13 +25,25 @@ export async function POST(request: Request) {
         { status: 201 },
       );
     const supabase = await createClient();
+    // La app es privada y usa una sola cuenta dueña. En instalaciones antiguas
+    // no estaba definida la variable del dueño; tomamos la cuenta existente
+    // para respetar la FK del esquema sin abrir registro público.
+    let ownerId = process.env.LIBRO_CAJA_OWNER_ID;
+    if (!ownerId) {
+      const { data: users, error: usersError } = await supabase.auth.admin.listUsers({
+        page: 1,
+        perPage: 1,
+      });
+      if (usersError || !users.users[0]) throw usersError ?? new Error("No existe un usuario dueño");
+      ownerId = users.users[0].id;
+    }
     const { data, error } = await supabase
       .from("companies")
       .insert({
         name: body.name,
         rut: body.rut,
         regime: body.regime,
-        owner_id: "libro-caja-private",
+        owner_id: ownerId,
       })
       .select()
       .single();
