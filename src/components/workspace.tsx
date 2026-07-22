@@ -795,6 +795,9 @@ function Sources({
   openRcvImport: () => void;
   documents: RcvDocument[];
 }) {
+  const [showDocuments, setShowDocuments] = useState(false);
+  const purchaseDocuments = documents.filter((document) => document.direction === "purchase");
+  const saleDocuments = documents.filter((document) => document.direction === "sale");
   return (
     <section className="content-stage">
       <div className="stage-title-row">
@@ -834,6 +837,11 @@ function Sources({
           <button className="button primary wide" onClick={openRcvImport}>
             <Upload size={16} /> Importar CSV del SII
           </button>
+          {documents.length > 0 && (
+            <button className="button secondary wide" onClick={() => setShowDocuments((visible) => !visible)} aria-expanded={showDocuments}>
+              <FileCheck2 size={16} /> {showDocuments ? "Ocultar" : "Ver"} detalle extraído ({documents.length})
+            </button>
+          )}
           {company.hasSiiCredential && (syncing ? (
             <div className="sync-progress">
               <span>
@@ -861,6 +869,48 @@ function Sources({
           </small>
         </span>
       </div>
+      {showDocuments && (
+        <section className="rcv-audit" aria-label="Detalle RCV extraído desde SII">
+          <div className="rcv-audit-head">
+            <div>
+              <p className="eyebrow">Auditoría de origen</p>
+              <h3>Detalle RCV extraído desde SII</h3>
+              <p>Estas son las líneas originales que alimentan el Libro Anexo 3. No son movimientos bancarios ni una conciliación.</p>
+            </div>
+            <div className="rcv-audit-counts">
+              <span><b>{saleDocuments.length}</b> ventas</span>
+              <span><b>{purchaseDocuments.length}</b> compras</span>
+            </div>
+          </div>
+          <div className="rcv-audit-table-wrap">
+            <table className="rcv-audit-table">
+              <thead>
+                <tr>
+                  <th>Origen</th><th>Tipo DTE</th><th>Folio</th><th>Contraparte</th><th>RUT</th><th>Fecha</th><th>Neto</th><th>IVA</th><th>Total</th>
+                </tr>
+              </thead>
+              <tbody>
+                {documents
+                  .slice()
+                  .sort((a, b) => b.issuedOn.localeCompare(a.issuedOn) || a.folio.localeCompare(b.folio))
+                  .map((document) => (
+                    <tr key={document.id}>
+                      <td><span className={`rcv-direction ${document.direction}`}>{document.direction === "sale" ? "Venta" : "Compra"}</span></td>
+                      <td>{document.documentCode} · {document.documentType}</td>
+                      <td>{document.folio}</td>
+                      <td>{document.counterpartyName}</td>
+                      <td>{document.counterpartyRut || "—"}</td>
+                      <td>{formatDate(document.issuedOn)}</td>
+                      <td className="numeric">{clp.format(document.netAmount)}</td>
+                      <td className="numeric">{clp.format(document.vatAmount)}</td>
+                      <td className="numeric strong">{clp.format(document.totalAmount)}</td>
+                    </tr>
+                  ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      )}
     </section>
   );
 }
