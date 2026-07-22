@@ -92,6 +92,7 @@ export function Workspace({
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState(100);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [periodClosed, setPeriodClosed] = useState(initialClosure.closed);
   const [closureVersion, setClosureVersion] = useState(initialClosure.version);
   const [openingConfirmed, setOpeningConfirmed] = useState(true);
@@ -119,6 +120,7 @@ export function Workspace({
   async function syncRcv() {
     setSyncing(true);
     setSyncProgress(12);
+    setSyncError(null);
     if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
       try {
         const response = await fetch("/api/rcv/sync", {
@@ -126,7 +128,10 @@ export function Workspace({
           headers: { "content-type": "application/json" },
           body: JSON.stringify({ companyId: company.id, period }),
         });
-        if (!response.ok) throw new Error("sync failed");
+        if (!response.ok) {
+          const body = await response.json().catch(() => ({}));
+          throw new Error(body.error ?? "No se pudo iniciar la extracción");
+        }
         const { job_id: jobId } = await response.json();
         for (let attempt = 0; attempt < 180; attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 1000));
@@ -135,6 +140,8 @@ export function Workspace({
             { cache: "no-store" },
           );
           const job = await statusResponse.json();
+          if (!statusResponse.ok)
+            throw new Error(job.error ?? "No se pudo consultar la extracción");
           setSyncProgress(Number(job.progress ?? 0));
           if (job.status === "succeeded") {
             setSyncing(false);
@@ -145,9 +152,14 @@ export function Workspace({
             throw new Error(job.error?.message ?? "sync failed");
         }
         throw new Error("sync timeout");
-      } catch {
+      } catch (error) {
         setSyncing(false);
         setSyncProgress(0);
+        setSyncError(
+          error instanceof Error
+            ? error.message
+            : "No se pudo completar la extracción",
+        );
         return;
       }
     }
@@ -408,6 +420,7 @@ export function Workspace({
           period={period}
           syncing={syncing}
           syncProgress={syncProgress}
+          syncError={syncError}
           syncRcv={syncRcv}
           openSettings={() => setSettingsOpen(true)}
           documents={documents}
@@ -754,6 +767,7 @@ function Sources({
   period,
   syncing,
   syncProgress,
+  syncError,
   syncRcv,
   openSettings,
   documents,
@@ -762,6 +776,7 @@ function Sources({
   period: string;
   syncing: boolean;
   syncProgress: number;
+  syncError: string | null;
   syncRcv: () => void;
   openSettings: () => void;
   documents: RcvDocument[];
@@ -819,6 +834,7 @@ function Sources({
               <RefreshCw size={16} /> Extraer RCV ahora
             </button>
           )}
+          {syncError && <p className="form-error" role="alert">{syncError}</p>}
           {company.hasSiiCredential && <small className="source-note">Luego podrás volver a extraer el RCV cuando lo necesites.</small>}
         </article>
       </div>
