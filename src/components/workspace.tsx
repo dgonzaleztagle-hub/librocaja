@@ -140,10 +140,20 @@ export function Workspace({
         const { job_id: jobId } = await response.json();
         for (let attempt = 0; attempt < 180; attempt += 1) {
           await new Promise((resolve) => window.setTimeout(resolve, 1000));
-          const statusResponse = await fetch(
-            `/api/rcv/jobs/${jobId}?companyId=${company.id}`,
-            { cache: "no-store" },
-          );
+          // Railway usa un único worker de Playwright. Durante la navegación
+          // por el SII puede demorar en entregar una consulta de estado; eso
+          // no invalida la extracción. Reintentamos y sólo mostramos error
+          // cuando se agota el plazo completo de la operación.
+          let statusResponse: Response;
+          try {
+            statusResponse = await fetch(
+              `/api/rcv/jobs/${jobId}?companyId=${company.id}`,
+              { cache: "no-store" },
+            );
+          } catch (pollError) {
+            if (attempt < 179) continue;
+            throw pollError;
+          }
           const job = await statusResponse.json();
           if (!statusResponse.ok)
             throw new Error(job.error ?? "No se pudo consultar la extracción");
