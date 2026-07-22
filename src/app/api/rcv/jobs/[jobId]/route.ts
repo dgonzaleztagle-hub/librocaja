@@ -116,6 +116,13 @@ async function persistResult(
       .select("id")
       .single();
   }
+  // La pantalla consulta el trabajo hasta recibir `succeeded`. Dos consultas
+  // pueden llegar casi a la vez: la segunda no es un error de extracción,
+  // sólo encuentra que la primera ya creó el mismo snapshot.
+  if (insertResult.error?.code === "23505") {
+    const duplicate = await findExistingSnapshot(supabase, companyId, snapshotPeriod, payloadHash);
+    if (duplicate.id) return duplicate.id;
+  }
   const { data: snapshot, error } = insertResult;
   if (error || !snapshot) throw error ?? new Error("No se pudo crear snapshot");
   const purchases = normalizeRcvDocuments(
