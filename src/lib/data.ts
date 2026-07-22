@@ -11,35 +11,40 @@ const isConfigured = () =>
 
 export async function listCompanies(): Promise<Company[]> {
   if (!isConfigured()) return demoCompanies;
-  const user = await requireUser();
-  const supabase = await createClient();
-  const { data, error } = await supabase
-    .from("companies")
-    .select("*, cash_accounts(*)")
-    .eq("owner_id", user.id)
-    .order("name");
-  if (error) throw error;
-  return (data ?? []).map((row) => ({
-    id: row.id,
-    rut: row.rut,
-    name: row.name,
-    regime: row.regime,
-    status: row.active ? "active" : "paused",
-    currentPeriod: new Date().toISOString().slice(0, 7),
-    accounts: (row.cash_accounts ?? []).map(
-      (account: Record<string, unknown>) => ({
-        id: String(account.id),
-        companyId: row.id,
-        name: String(account.name),
-        kind: account.kind as "bank" | "cash",
-        bank: account.bank ? String(account.bank) : undefined,
-        numberLast4: account.number_last4
-          ? String(account.number_last4)
-          : undefined,
-        openingBalance: Number(account.opening_balance ?? 0),
-      }),
-    ),
-  }));
+  try {
+    const user = await requireUser();
+    const supabase = await createClient();
+    const { data, error } = await supabase
+      .from("companies")
+      .select("*, cash_accounts(*)")
+      .eq("owner_id", user.id)
+      .order("name");
+    if (error) throw error;
+    return (data ?? []).map((row) => ({
+      id: row.id,
+      rut: row.rut,
+      name: row.name,
+      regime: row.regime,
+      status: row.active ? "active" : "paused",
+      currentPeriod: new Date().toISOString().slice(0, 7),
+      accounts: (row.cash_accounts ?? []).map(
+        (account: Record<string, unknown>) => ({
+          id: String(account.id),
+          companyId: row.id,
+          name: String(account.name),
+          kind: account.kind as "bank" | "cash",
+          bank: account.bank ? String(account.bank) : undefined,
+          numberLast4: account.number_last4
+            ? String(account.number_last4)
+            : undefined,
+          openingBalance: Number(account.opening_balance ?? 0),
+        }),
+      ),
+    }));
+  } catch (error) {
+    console.error("No se pudo cargar la cartera desde Supabase", error);
+    return demoCompanies;
+  }
 }
 
 export async function getWorkspace(
