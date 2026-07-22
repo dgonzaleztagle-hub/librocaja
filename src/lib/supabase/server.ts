@@ -7,14 +7,18 @@ export async function createClient() {
   const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
   const key = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!url || !key) throw new Error("Supabase no está configurado");
+  const noStoreFetch: typeof fetch = (input, init) =>
+    fetch(input, { ...init, cache: "no-store" });
   const serviceRole = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (serviceRole)
     return createAdminClient(url, serviceRole, {
       auth: { autoRefreshToken: false, persistSession: false },
       db: { schema: "libro_caja" },
+      global: { fetch: noStoreFetch },
     });
   return createServerClient(url, key, {
     db: { schema: "libro_caja" },
+    global: { fetch: noStoreFetch },
     cookies: {
       getAll: () => cookieStore.getAll(),
       setAll(cookiesToSet) {
