@@ -24,10 +24,7 @@ export async function createClient() {
 }
 
 export async function requireUser() {
-  if (
-    !process.env.NEXT_PUBLIC_SUPABASE_URL &&
-    process.env.NODE_ENV !== "production"
-  ) {
+  if (!process.env.NEXT_PUBLIC_SUPABASE_URL) {
     return { id: "demo-user", email: "contador@demo.local" };
   }
   const supabase = await createClient();
