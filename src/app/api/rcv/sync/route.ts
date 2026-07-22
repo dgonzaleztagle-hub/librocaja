@@ -27,7 +27,7 @@ export async function POST(request: Request) {
         { error: "Configura la clave SII de esta empresa antes de sincronizar" },
         { status: 409 },
       );
-    const baseUrl = process.env.RAILWAY_SCRAPER_URL?.replace(/\/$/, "");
+    const baseUrl = (process.env.APISII_SCRAPER_URL || "https://apisii-production.up.railway.app").replace(/\/$/, "");
     const apiKey = process.env.RAILWAY_INTERNAL_API_KEY;
     if (!baseUrl || !apiKey) throw new Error("Integración Railway no configurada");
     const response = await fetch(`${baseUrl}/v2/rcv/extractions`, {
