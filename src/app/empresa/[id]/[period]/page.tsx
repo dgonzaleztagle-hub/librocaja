@@ -3,6 +3,9 @@ import { AppShell } from "@/components/app-shell";
 import { Workspace } from "@/components/workspace";
 import { getWorkspace } from "@/lib/data";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 export default async function CompanyPeriodPage({
   params,
 }: {
