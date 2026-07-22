@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useMemo, useState } from "react";
 import {
   ArrowRight,
@@ -18,6 +19,7 @@ export function Portfolio({
 }: {
   initialCompanies: Company[];
 }) {
+  const router = useRouter();
   const [query, setQuery] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [companies, setCompanies] = useState(initialCompanies);
@@ -49,6 +51,7 @@ export function Portfolio({
       if (!response.ok) throw new Error("create failed");
       const { company } = await response.json();
       setCompanies((current) => [...current, company]);
+      router.push(`/empresa/${company.id}/${company.currentPeriod}`);
     } catch {
       return;
     }
@@ -212,7 +215,7 @@ export function Portfolio({
               <div>
                 <p className="eyebrow">Nueva empresa</p>
                 <h2 id="new-company">Agregar empresa</h2>
-                <p>Después configurarás su clave SII y las cuentas de caja.</p>
+                <p>Al crearla irás directo a guardar la clave SII y extraer el RCV.</p>
               </div>
               <button
                 className="modal-close"

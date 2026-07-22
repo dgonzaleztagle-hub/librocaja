@@ -16,7 +16,7 @@ export async function listCompanies(): Promise<Company[]> {
     const supabase = await createClient();
     const { data, error } = await supabase
       .from("companies")
-      .select("*, cash_accounts(*)")
+      .select("*, cash_accounts(*), sii_credentials(company_id)")
       .eq("owner_id", user.id)
       .order("name");
     if (error) throw error;
@@ -27,6 +27,7 @@ export async function listCompanies(): Promise<Company[]> {
       regime: row.regime,
       status: row.active ? "active" : "paused",
       currentPeriod: new Date().toISOString().slice(0, 7),
+      hasSiiCredential: Boolean(row.sii_credentials),
       accounts: (row.cash_accounts ?? []).map(
         (account: Record<string, unknown>) => ({
           id: String(account.id),
@@ -81,7 +82,7 @@ export async function getWorkspace(
   ] = await Promise.all([
     supabase
       .from("companies")
-      .select("*, cash_accounts(*)")
+      .select("*, cash_accounts(*), sii_credentials(company_id)")
       .eq("id", companyId)
       .single(),
     supabase
@@ -114,6 +115,7 @@ export async function getWorkspace(
     regime: companyRow.regime,
     status: companyRow.active ? "active" : "paused",
     currentPeriod: period,
+    hasSiiCredential: Boolean(companyRow.sii_credentials),
     accounts: (companyRow.cash_accounts ?? []).map(
       (account: Record<string, unknown>) => ({
         id: String(account.id),

@@ -407,6 +407,7 @@ export function Workspace({
           syncing={syncing}
           syncProgress={syncProgress}
           syncRcv={syncRcv}
+          openSettings={() => setSettingsOpen(true)}
           openImport={() => setImportOpen(true)}
         />
       )}
@@ -732,6 +733,7 @@ export function Workspace({
       {settingsOpen && (
         <CompanySetupModal
           company={company}
+          hasSiiCredential={company.hasSiiCredential ?? false}
           onClose={() => setSettingsOpen(false)}
           onSaved={() => {
             setSettingsOpen(false);
@@ -751,6 +753,7 @@ function Sources({
   syncing,
   syncProgress,
   syncRcv,
+  openSettings,
   openImport,
 }: {
   company: Company;
@@ -758,6 +761,7 @@ function Sources({
   syncing: boolean;
   syncProgress: number;
   syncRcv: () => void;
+  openSettings: () => void;
   openImport: () => void;
 }) {
   return (
@@ -776,11 +780,13 @@ function Sources({
         <article className="source-card">
           <div className="source-card-head">
             <span className="source-icon sii">SII</span>
-            <span className="status-pill ok">Conectado</span>
+            <span className={`status-pill ${company.hasSiiCredential ? "ok" : "progress"}`}>
+              {company.hasSiiCredential ? "Lista" : "Pendiente"}
+            </span>
           </div>
           <h3>Registro de Compras y Ventas</h3>
-          <p>Detalle oficial de compras y ventas de {periodLabel(period)}.</p>
-          <div className="source-stats">
+          <p>{company.hasSiiCredential ? `Detalle oficial de compras y ventas de ${periodLabel(period)}.` : "Guarda primero la clave SII de esta empresa. Después podrás extraer el RCV."}</p>
+          {company.hasSiiCredential && <div className="source-stats">
             <span>
               <b>11</b>
               <small>Ventas</small>
@@ -793,8 +799,12 @@ function Sources({
               <b>19</b>
               <small>Documentos</small>
             </span>
-          </div>
-          {syncing ? (
+          </div>}
+          {!company.hasSiiCredential ? (
+            <button className="button primary wide" onClick={openSettings}>
+              <KeyRound size={16} /> Paso 1 · Guardar clave SII
+            </button>
+          ) : syncing ? (
             <div className="sync-progress">
               <span>
                 <LoaderCircle className="spin" size={16} /> Consultando SII…{" "}
@@ -804,12 +814,10 @@ function Sources({
             </div>
           ) : (
             <button className="button secondary wide" onClick={syncRcv}>
-              <RefreshCw size={16} /> Sincronizar nuevamente
+              <RefreshCw size={16} /> Extraer RCV ahora
             </button>
           )}
-          <small className="source-note">
-            Última sincronización: hoy, 09:42
-          </small>
+          {company.hasSiiCredential && <small className="source-note">Luego podrás volver a extraer el RCV cuando lo necesites.</small>}
         </article>
         <article className="source-card">
           <div className="source-card-head">
@@ -1689,10 +1697,12 @@ function ManualModal({
 
 function CompanySetupModal({
   company,
+  hasSiiCredential,
   onClose,
   onSaved,
 }: {
   company: Company;
+  hasSiiCredential: boolean;
   onClose: () => void;
   onSaved: () => void;
 }) {
@@ -1718,6 +1728,8 @@ function CompanySetupModal({
         );
         if (!credentialResponse.ok) throw new Error("credential failed");
       }
+      const accountName = String(form.get("accountName") ?? "").trim();
+      if (accountName) {
       const accountResponse = await fetch(
         `/api/companies/${company.id}/accounts`,
         {
@@ -1733,6 +1745,7 @@ function CompanySetupModal({
         },
       );
       if (!accountResponse.ok) throw new Error("save failed");
+      }
       onSaved();
     } catch {
       setError("No se pudo guardar la configuración.");
@@ -1749,8 +1762,8 @@ function CompanySetupModal({
         <div className="modal-header">
           <div>
             <p className="eyebrow">Configuración privada</p>
-            <h2>SII y cuenta bancaria</h2>
-            <p>La clave SII se cifra antes de guardarse y solo se usa al sincronizar.</p>
+            <h2>Conectar empresa al SII</h2>
+            <p>La clave se cifra antes de guardarse y solo se usa para extraer el RCV.</p>
           </div>
           <button className="modal-close" onClick={onClose}>
             ×
@@ -1759,12 +1772,12 @@ function CompanySetupModal({
         <form action={save} className="form-grid">
           <label className="span-2">
             Clave SII
-            <input name="siiPassword" type="password" autoComplete="new-password" placeholder="Ingresa o reemplaza la clave SII" />
+            <input name="siiPassword" type="password" autoComplete="new-password" required={!hasSiiCredential} placeholder="Ingresa o reemplaza la clave SII" />
             <small>Déjala vacía para conservar la clave ya guardada.</small>
           </label>
           <label>
-            Banco
-            <input name="bank" required placeholder="Banco de Chile" />
+            Banco <small>(opcional)</small>
+            <input name="bank" placeholder="Banco de Chile" />
           </label>
           <label>
             Últimos 4 dígitos
@@ -1773,7 +1786,6 @@ function CompanySetupModal({
               inputMode="numeric"
               pattern="[0-9]{4}"
               maxLength={4}
-              required
               placeholder="4831"
             />
           </label>
@@ -1781,8 +1793,7 @@ function CompanySetupModal({
             Nombre interno de la cuenta
             <input
               name="accountName"
-              required
-              defaultValue="Cuenta corriente principal"
+              placeholder="Cuenta corriente principal (opcional)"
             />
           </label>
           <label className="span-2">
@@ -1790,7 +1801,6 @@ function CompanySetupModal({
             <input
               name="openingBalance"
               type="number"
-              required
               defaultValue="0"
             />
           </label>
@@ -1809,7 +1819,7 @@ function CompanySetupModal({
               ) : (
                 <ShieldCheck size={16} />
               )}{" "}
-              Guardar configuración
+              Guardar y volver a Fuentes
             </button>
           </div>
         </form>

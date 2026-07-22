@@ -22,6 +22,7 @@ export interface Company {
   status: "active" | "paused";
   lastClosedPeriod?: string;
   currentPeriod: string;
+  hasSiiCredential?: boolean;
   accounts: CashAccount[];
 }
 
@@ -116,4 +117,3 @@ export interface CloseValidation {
   canClose: boolean;
   blockers: { code: string; label: string; count?: number }[];
 }
-
