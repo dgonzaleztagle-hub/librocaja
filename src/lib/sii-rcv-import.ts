@@ -49,9 +49,6 @@ export async function parseSiiRcvFile(file: File, period: string): Promise<SiiRc
     .map((row, index) => normalizeRow(row, direction, period, index))
     .filter((document): document is SiiRcvFile["documents"][number] => document !== null);
   if (!documents.length) throw new Error(`${file.name} no contiene documentos con monto total válido.`);
-  const outOfPeriod = documents.find((document) => document.period !== period);
-  if (outOfPeriod)
-    throw new Error(`${file.name} contiene documentos de ${outOfPeriod.period}, no de ${period}.`);
   return { direction, documents, filename: file.name, skipped: rows.length - documents.length };
 }
 
@@ -70,7 +67,10 @@ function normalizeRow(
   // de caja y se omiten para cumplir la validación C8 > 0.
   if (totalAmount <= 0) return null;
   return {
-    period: issuedOn.slice(0, 7) || selectedPeriod,
+    // El CSV mensual puede contener documentos emitidos el mes anterior que
+    // fueron recibidos o contabilizados en este RCV. El período es el del
+    // registro importado; C6 conserva siempre la fecha real del documento.
+    period: selectedPeriod,
     direction,
     documentCode,
     documentType: documentTypes[documentCode] ?? `Documento ${documentCode}`,
