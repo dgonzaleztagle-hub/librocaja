@@ -68,28 +68,32 @@ async function persistResult(
 ) {
   const period = String(result.period);
   const payloadHash = String(result.payload_sha256);
-  const { data: existing, error: existingError } = await supabase
-    .from("rcv_snapshots")
-    .select("id")
-    .eq("company_id", companyId)
-    .eq("period", period)
-    .eq("payload_sha256", payloadHash)
-    .maybeSingle();
-  // PostgREST devuelve errores como objetos simples, no como Error. No los
-  // silenciemos: de otro modo la extracción parece fallar sin explicación.
-  if (existingError) throw new Error(safeErrorMessage(existingError));
-  if (existing) return existing.id;
+  let snapshotPeriod = period;
+  let existingResult = await findExistingSnapshot(supabase, companyId, snapshotPeriod, payloadHash);
+  // La primera versión del esquema desplegado tenía un patrón PostgreSQL que
+  // interpretaba `\\d` de forma literal. La migración 002 lo corrige; mientras
+  // tanto conservamos el período real en los documentos y sólo usamos esta
+  // clave interna compatible para no detener una extracción en producción.
+  if (existingResult.constraintError)
+    snapshotPeriod = legacySnapshotPeriod(period);
+  else if (existingResult.id)
+    return existingResult.id;
+
+  if (snapshotPeriod !== period) {
+    existingResult = await findExistingSnapshot(supabase, companyId, snapshotPeriod, payloadHash);
+    if (existingResult.id) return existingResult.id;
+  }
   const { count, error: countError } = await supabase
     .from("rcv_snapshots")
     .select("id", { count: "exact", head: true })
     .eq("company_id", companyId)
-    .eq("period", period);
+    .eq("period", snapshotPeriod);
   if (countError) throw new Error(safeErrorMessage(countError));
-  const { data: snapshot, error } = await supabase
+  let insertResult = await supabase
     .from("rcv_snapshots")
     .insert({
       company_id: companyId,
-      period,
+      period: snapshotPeriod,
       source: "railway",
       payload_sha256: payloadHash,
       version: (count ?? 0) + 1,
@@ -97,6 +101,22 @@ async function persistResult(
     })
     .select("id")
     .single();
+  if (insertResult.error?.code === "23514" && snapshotPeriod === period) {
+    snapshotPeriod = legacySnapshotPeriod(period);
+    insertResult = await supabase
+      .from("rcv_snapshots")
+      .insert({
+        company_id: companyId,
+        period: snapshotPeriod,
+        source: "railway",
+        payload_sha256: payloadHash,
+        version: 1,
+        raw_summary: result.summaries,
+      })
+      .select("id")
+      .single();
+  }
+  const { data: snapshot, error } = insertResult;
   if (error || !snapshot) throw error ?? new Error("No se pudo crear snapshot");
   const purchases = normalizeRcvDocuments(
     (result.purchases ?? []) as Record<string, unknown>[],
@@ -130,6 +150,32 @@ async function persistResult(
     if (insertError) throw insertError;
   }
   return snapshot.id;
+}
+
+async function findExistingSnapshot(
+  supabase: Awaited<ReturnType<typeof createClient>>,
+  companyId: string,
+  period: string,
+  payloadHash: string,
+) {
+  const { data: existing, error } = await supabase
+    .from("rcv_snapshots")
+    .select("id")
+    .eq("company_id", companyId)
+    .eq("period", period)
+    .eq("payload_sha256", payloadHash)
+    .maybeSingle();
+  // PostgREST devuelve errores como objetos simples, no como Error. No los
+  // silenciemos: de otro modo la extracción parece fallar sin explicación.
+  if (error) {
+    if (error.code === "23514") return { id: null, constraintError: true };
+    throw new Error(safeErrorMessage(error));
+  }
+  return { id: existing?.id ?? null, constraintError: false };
+}
+
+function legacySnapshotPeriod(period: string) {
+  return `\\${period.split("-").map((part) => "d".repeat(part.length)).join("-")}`;
 }
 
 function safeErrorMessage(error: unknown) {
