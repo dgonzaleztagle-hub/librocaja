@@ -72,12 +72,16 @@ export function Workspace({
   initialMovements,
   initialDocuments,
   initialClosure,
+  openingBalance,
+  openingBalanceCarried,
 }: {
   company: Company;
   period: string;
   initialMovements: CashMovement[];
   initialDocuments: RcvDocument[];
   initialClosure: { closed: boolean; version: number };
+  openingBalance: number;
+  openingBalanceCarried: boolean;
 }) {
   const router = useRouter();
   const [stage, setStage] = useState<Stage>("sources");
@@ -102,7 +106,7 @@ export function Workspace({
   const [syncError, setSyncError] = useState<string | null>(null);
   const [periodClosed, setPeriodClosed] = useState(initialClosure.closed);
   const [closureVersion, setClosureVersion] = useState(initialClosure.version);
-  const [openingConfirmed, setOpeningConfirmed] = useState(true);
+  const [openingConfirmed, setOpeningConfirmed] = useState(openingBalanceCarried);
   // useState(initialX) solo toma el valor inicial en el primer render: un
   // router.refresh() sin cambiar de ruta (misma empresa/período) no lo vuelve
   // a aplicar por sí solo, así que la sincronización RCV y la importación de
@@ -300,10 +304,6 @@ export function Workspace({
   }
 
   async function closePeriod(forced: boolean, forceReason?: string) {
-    const openingBalance = company.accounts.reduce(
-      (sum, account) => sum + account.openingBalance,
-      0,
-    );
     if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
       const response = await fetch("/api/close", {
         method: "POST",
@@ -788,6 +788,8 @@ export function Workspace({
           ledger={ledger}
           totals={totals}
           validation={closeValidation}
+          openingBalance={openingBalance}
+          openingBalanceCarried={openingBalanceCarried}
           openingConfirmed={openingConfirmed}
           setOpeningConfirmed={setOpeningConfirmed}
           closed={periodClosed}
@@ -1214,6 +1216,8 @@ function CloseStage({
   ledger,
   totals,
   validation,
+  openingBalance,
+  openingBalanceCarried,
   openingConfirmed,
   setOpeningConfirmed,
   closed,
@@ -1228,6 +1232,8 @@ function CloseStage({
   ledger: ReturnType<typeof buildLedger>;
   totals: ReturnType<typeof calculateTotals>;
   validation: ReturnType<typeof validateClose>;
+  openingBalance: number;
+  openingBalanceCarried: boolean;
   openingConfirmed: boolean;
   setOpeningConfirmed: (value: boolean) => void;
   closed: boolean;
@@ -1350,30 +1356,39 @@ function CloseStage({
       <div className="close-layout">
         <section className="validation-card">
           <h3>Validaciones del período</h3>
-          <button
-            className="validation-row"
-            onClick={() => setOpeningConfirmed(!openingConfirmed)}
-          >
-            <span className={openingConfirmed ? "check-ok" : "check-bad"}>
-              {openingConfirmed ? <Check size={15} /> : <X size={15} />}
-            </span>
-            <span>
-              <b>Continuidad del saldo inicial</b>
-              <small>
-                {openingConfirmed
-                  ? "Coincide con el cierre del período anterior."
-                  : "Confirma el origen del saldo antes de cerrar."}
-              </small>
-            </span>
-            <b>
-              {clp.format(
-                company.accounts.reduce(
-                  (sum, account) => sum + account.openingBalance,
-                  0,
-                ),
-              )}
-            </b>
-          </button>
+          {openingBalanceCarried ? (
+            <div className="validation-row">
+              <span className="check-ok">
+                <Check size={15} />
+              </span>
+              <span>
+                <b>Continuidad del saldo inicial</b>
+                <small>
+                  Se traspasó automáticamente desde el cierre del período
+                  anterior.
+                </small>
+              </span>
+              <b>{clp.format(openingBalance)}</b>
+            </div>
+          ) : (
+            <button
+              className="validation-row"
+              onClick={() => setOpeningConfirmed(!openingConfirmed)}
+            >
+              <span className={openingConfirmed ? "check-ok" : "check-bad"}>
+                {openingConfirmed ? <Check size={15} /> : <X size={15} />}
+              </span>
+              <span>
+                <b>Continuidad del saldo inicial</b>
+                <small>
+                  {openingConfirmed
+                    ? "Saldo inicial configurado en las cuentas de la empresa."
+                    : "Confirma el saldo inicial configurado antes de cerrar."}
+                </small>
+              </span>
+              <b>{clp.format(openingBalance)}</b>
+            </button>
+          )}
           {validation.blockers
             .filter((b) => b.code !== "opening")
             .map((blocker) => (
@@ -1409,14 +1424,7 @@ function CloseStage({
           <dl>
             <div>
               <dt>Saldo inicial</dt>
-              <dd>
-                {clp.format(
-                  company.accounts.reduce(
-                    (sum, account) => sum + account.openingBalance,
-                    0,
-                  ),
-                )}
-              </dd>
+              <dd>{clp.format(openingBalance)}</dd>
             </div>
             <div>
               <dt>Flujo de ingresos</dt>

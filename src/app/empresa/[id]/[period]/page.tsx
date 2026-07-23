@@ -22,6 +22,8 @@ export default async function CompanyPeriodPage({
         initialMovements={data.movements}
         initialDocuments={data.documents}
         initialClosure={data.closure}
+        openingBalance={data.openingBalance}
+        openingBalanceCarried={data.openingBalanceCarried}
       />
     </AppShell>
   );

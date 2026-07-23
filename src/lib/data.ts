@@ -9,6 +9,12 @@ const isConfigured = () =>
     process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY,
   );
 
+function previousPeriodOf(period: string) {
+  const [year, month] = period.split("-").map(Number);
+  const previous = new Date(year, month - 1 - 1, 1);
+  return `${previous.getFullYear()}-${String(previous.getMonth() + 1).padStart(2, "0")}`;
+}
+
 export async function listCompanies(): Promise<Company[]> {
   if (!isConfigured()) return demoCompanies;
   try {
@@ -54,6 +60,8 @@ export async function getWorkspace(
   movements: CashMovement[];
   documents: RcvDocument[];
   closure: { closed: boolean; version: number };
+  openingBalance: number;
+  openingBalanceCarried: boolean;
 } | null> {
   if (!isConfigured()) {
     const company = demoCompanies.find((item) => item.id === companyId);
@@ -67,6 +75,11 @@ export async function getWorkspace(
             (item) => item.companyId === companyId,
           ),
           closure: { closed: false, version: 0 },
+          openingBalance: company.accounts.reduce(
+            (sum, account) => sum + account.openingBalance,
+            0,
+          ),
+          openingBalanceCarried: false,
         }
       : null;
   }
@@ -76,6 +89,7 @@ export async function getWorkspace(
     { data: movementRows },
     { data: documentRows },
     { data: closureRow },
+    { data: previousClosureRow },
   ] = await Promise.all([
     supabase
       .from("companies")
@@ -100,6 +114,19 @@ export async function getWorkspace(
       .select("status,version")
       .eq("company_id", companyId)
       .eq("period", period)
+      .order("version", { ascending: false })
+      .limit(1)
+      .maybeSingle(),
+    // El saldo inicial del mes es el saldo final del cierre anterior: nunca
+    // se vuelve a pedir a mano. Solo el primer período usa el saldo
+    // configurado en las cuentas. No se filtra por status="closed": si el
+    // período anterior está reabierto ("in_review") su closing_balance
+    // sigue siendo el último valor válido hasta que se vuelva a cerrar.
+    supabase
+      .from("period_closures")
+      .select("closing_balance")
+      .eq("company_id", companyId)
+      .eq("period", previousPeriodOf(period))
       .order("version", { ascending: false })
       .limit(1)
       .maybeSingle(),
@@ -167,6 +194,10 @@ export async function getWorkspace(
     status: row.status,
     snapshotId: row.snapshot_id,
   }));
+  const openingBalanceCarried = previousClosureRow != null;
+  const openingBalance = openingBalanceCarried
+    ? Number(previousClosureRow.closing_balance)
+    : company.accounts.reduce((sum, account) => sum + account.openingBalance, 0);
   return {
     company,
     movements,
@@ -175,5 +206,7 @@ export async function getWorkspace(
       closed: closureRow?.status === "closed",
       version: Number(closureRow?.version ?? 0),
     },
+    openingBalance,
+    openingBalanceCarried,
   };
 }
