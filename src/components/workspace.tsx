@@ -1815,7 +1815,18 @@ function ManualModal({
             ×
           </button>
         </div>
-        <form action={addManual} className="form-grid">
+        <form
+          onSubmit={async (e) => {
+            e.preventDefault();
+            try {
+              const formData = new FormData(e.currentTarget);
+              await addManual(formData);
+            } catch (err) {
+              console.error("Error al guardar movimiento manual:", err);
+            }
+          }}
+          className="form-grid"
+        >
           <label>
             Fecha
             <input
