@@ -66,6 +66,10 @@ const stages = [
 ] as const;
 type Stage = (typeof stages)[number]["id"] | "reconcile";
 
+// Fila sintética de saldo inicial: no existe en la base, solo se arma en
+// memoria para que aparezca como primera línea del libro.
+const OPENING_BALANCE_MOVEMENT_ID = "opening-balance";
+
 export function Workspace({
   company,
   period,
@@ -129,9 +133,31 @@ export function Workspace({
     setPeriodClosed(initialClosure.closed);
     setClosureVersion(initialClosure.version);
   }
+  // El saldo traspasado del mes anterior (o el configurado en la cuenta, en
+  // el primer período) debe ser la primera línea del libro, no solo un dato
+  // aparte en el cierre.
+  const openingMovement = useMemo<CashMovement>(
+    () => ({
+      id: OPENING_BALANCE_MOVEMENT_ID,
+      companyId: company.id,
+      accountId: "",
+      period,
+      operationType: 0,
+      occurredOn: `${period}-01`,
+      description: "Saldo inicial",
+      documentType: "Saldo inicial",
+      amount: openingBalance,
+      taxableAmount: 0,
+      category: "other",
+      source: "manual",
+      reconciled: true,
+      createdOrder: "",
+    }),
+    [company.id, period, openingBalance],
+  );
   const ledger = useMemo(
-    () => buildCompleteLedger(company, documents, movements),
-    [company, documents, movements],
+    () => buildCompleteLedger(company, documents, [openingMovement, ...movements]),
+    [company, documents, movements, openingMovement],
   );
   const totals = useMemo(() => calculateTotals(ledger), [ledger]);
   const closeValidation = useMemo(
@@ -1143,7 +1169,9 @@ function Review({
           <tbody>
             {ledger.map((row) => {
               const movement = movements.find((m) => m.id === row.movementId);
-              const editable = movement?.source === "manual";
+              const editable =
+                movement?.source === "manual" &&
+                movement.id !== OPENING_BALANCE_MOVEMENT_ID;
               return (
                 <tr key={row.movementId}>
                   <td>{row.correlation}</td>
