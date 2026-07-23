@@ -327,6 +327,17 @@ export function Workspace({
     const operationType = Number(form.get("operationType")) as 1 | 2;
     const category = String(form.get("category")) as MovementCategory;
     const date = String(form.get("date"));
+    // La base imponible no se pide al usuario: se calcula desde el monto
+    // bruto ingresado (IVA 19%), salvo flujos que nunca son base imponible.
+    const nonTaxableCategories: MovementCategory[] = [
+      "loan",
+      "capital_contribution",
+      "owner_withdrawal",
+      "internal_transfer",
+    ];
+    const taxableAmount = nonTaxableCategories.includes(category)
+      ? 0
+      : Math.round(amount / 1.19);
     const movement: CashMovement = {
       id: crypto.randomUUID(),
       companyId: company.id,
@@ -336,7 +347,7 @@ export function Workspace({
       occurredOn: date,
       description: String(form.get("description")),
       amount: operationType === 2 ? -amount : amount,
-      taxableAmount: Number(form.get("taxableAmount") ?? 0),
+      taxableAmount,
       category,
       source: "manual",
       reconciled: true,
@@ -1807,8 +1818,12 @@ function ManualModal({
   company: Company;
   period: string;
   onClose: () => void;
-  addManual: (form: FormData) => void;
+  addManual: (form: FormData) => void | Promise<void>;
 }) {
+  const [amount, setAmount] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const previewTaxable = Math.round((Number(amount) || 0) / 1.19);
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div
@@ -1828,11 +1843,19 @@ function ManualModal({
         <form
           onSubmit={async (e) => {
             e.preventDefault();
+            setBusy(true);
+            setError("");
             try {
               const formData = new FormData(e.currentTarget);
               await addManual(formData);
             } catch (err) {
-              console.error("Error al guardar movimiento manual:", err);
+              setError(
+                err instanceof Error
+                  ? err.message
+                  : "No se pudo guardar el movimiento.",
+              );
+            } finally {
+              setBusy(false);
             }
           }}
           className="form-grid"
@@ -1892,27 +1915,39 @@ function ManualModal({
           </label>
           <label>
             Monto total
-            <input type="number" min="1" name="amount" required />
+            <input
+              type="number"
+              min="1"
+              name="amount"
+              value={amount}
+              onChange={(e) => setAmount(e.target.value)}
+              required
+            />
           </label>
           <label>
             Monto base imponible
             <input
-              type="number"
-              min="0"
-              name="taxableAmount"
-              defaultValue="0"
-              required
+              type="text"
+              readOnly
+              disabled
+              value={clp.format(previewTaxable)}
             />
+            <small>Se calcula solo: monto total ÷ 1,19.</small>
           </label>
+          {error && <span className="login-error span-2">{error}</span>}
           <div className="modal-actions span-2">
             <button
               type="button"
               className="button secondary"
+              disabled={busy}
               onClick={onClose}
             >
               Cancelar
             </button>
-            <button className="button primary">Guardar movimiento</button>
+            <button className="button primary" disabled={busy}>
+              {busy ? <LoaderCircle className="spin" size={16} /> : null}{" "}
+              {busy ? "Guardando…" : "Guardar movimiento"}
+            </button>
           </div>
         </form>
       </div>
