@@ -1828,11 +1828,15 @@ function ManualModal({
           <label>
             Cuenta
             <select name="accountId">
-              {company.accounts.map((a) => (
-                <option value={a.id} key={a.id}>
-                  {a.name}
-                </option>
-              ))}
+              {(company.accounts ?? []).length === 0 ? (
+                <option value="">Sin cuentas configuradas</option>
+              ) : (
+                (company.accounts ?? []).map((a) => (
+                  <option value={a.id} key={a.id}>
+                    {a.name}
+                  </option>
+                ))
+              )}
             </select>
           </label>
           <label>
