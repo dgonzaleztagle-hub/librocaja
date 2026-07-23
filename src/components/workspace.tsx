@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useMemo, useRef, useState, type RefObject } from "react";
+import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
 import {
   AlertCircle,
   ArrowDownLeft,
@@ -98,6 +98,16 @@ export function Workspace({
   const [periodClosed, setPeriodClosed] = useState(initialClosure.closed);
   const [closureVersion, setClosureVersion] = useState(initialClosure.version);
   const [openingConfirmed, setOpeningConfirmed] = useState(true);
+  // useState(initialX) solo toma el valor inicial en el primer render: un
+  // router.refresh() sin cambiar de ruta (misma empresa/período) no lo vuelve
+  // a aplicar por sí solo, así que la sincronización RCV y la importación de
+  // CSV podían "terminar bien" sin que la tabla se actualizara en pantalla.
+  useEffect(() => setMovements(initialMovements), [initialMovements]);
+  useEffect(() => setDocuments(initialDocuments), [initialDocuments]);
+  useEffect(() => {
+    setPeriodClosed(initialClosure.closed);
+    setClosureVersion(initialClosure.version);
+  }, [initialClosure]);
   const ledger = useMemo(
     () => buildCompleteLedger(company, documents, movements),
     [company, documents, movements],
