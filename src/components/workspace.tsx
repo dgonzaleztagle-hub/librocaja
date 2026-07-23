@@ -22,6 +22,7 @@ import {
   Link2,
   LoaderCircle,
   LockKeyhole,
+  Pencil,
   Plus,
   RefreshCw,
   Search,
@@ -94,6 +95,7 @@ export function Workspace({
   const [importOpen, setImportOpen] = useState(false);
   const [rcvImportOpen, setRcvImportOpen] = useState(false);
   const [manualOpen, setManualOpen] = useState(false);
+  const [editingMovement, setEditingMovement] = useState<CashMovement | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [syncing, setSyncing] = useState(false);
   const [syncProgress, setSyncProgress] = useState(100);
@@ -338,22 +340,7 @@ export function Workspace({
   }
 
   async function addManual(form: FormData) {
-    const amount = Math.abs(Number(form.get("amount") ?? 0));
-    const operationType = Number(form.get("operationType")) as 1 | 2;
-    const category = String(form.get("category")) as MovementCategory;
-    const date = String(form.get("date"));
-    const documentKind = String(form.get("documentKind") ?? "") as
-      | ManualDocumentKind
-      | "";
-    const affectsIva = form.get("affectsIva") !== "no";
-    // Base imponible según reglas del contador (INGRESO_MANUAL.pdf): solo
-    // compras/ventas con documento tributario generan base; el resto es $0.
-    const taxableAmount = manualTaxableAmount(
-      category,
-      documentKind,
-      amount,
-      affectsIva,
-    );
+    const parsed = parseManualForm(form);
     const movement: CashMovement = {
       id: crypto.randomUUID(),
       companyId: company.id,
@@ -362,23 +349,35 @@ export function Workspace({
       // resuelve una cuenta de caja implícita al guardar.
       accountId: "",
       period,
-      operationType,
-      occurredOn: date,
-      description: String(form.get("description")),
-      amount: operationType === 2 ? -amount : amount,
-      taxableAmount,
-      category,
-      documentType: documentKind
-        ? manualDocumentKindLabels[documentKind]
-        : undefined,
       source: "manual",
       reconciled: true,
       createdOrder: `z-${Date.now()}`,
+      ...parsed,
     };
     if (process.env.NEXT_PUBLIC_SUPABASE_URL)
       await persistMovements(company.id, [movement]);
     setMovements((items) => [...items, movement]);
     setManualOpen(false);
+    router.refresh();
+  }
+
+  async function updateManual(id: string, form: FormData) {
+    const parsed = parseManualForm(form);
+    if (process.env.NEXT_PUBLIC_SUPABASE_URL) {
+      const response = await fetch(`/api/movements/${id}`, {
+        method: "PATCH",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ companyId: company.id, ...parsed }),
+      });
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "No se pudo actualizar el movimiento");
+      }
+    }
+    setMovements((items) =>
+      items.map((item) => (item.id === id ? { ...item, ...parsed } : item)),
+    );
+    setEditingMovement(null);
     router.refresh();
   }
 
@@ -482,7 +481,7 @@ export function Workspace({
           className="button secondary settings-fab"
           onClick={() => setSettingsOpen(true)}
         >
-          <KeyRound size={16} /> Configurar SII y cuentas
+          <KeyRound size={16} /> Cambiar clave SII
         </button>
       )}
 
@@ -773,8 +772,10 @@ export function Workspace({
           ledger={ledger}
           totals={totals}
           documents={documents}
+          movements={movements}
           excludedPendingCount={pendingCount}
           openManual={() => setManualOpen(true)}
+          onEditManual={(movement) => setEditingMovement(movement)}
           goClose={() => setStage("close")}
         />
       )}
@@ -822,11 +823,19 @@ export function Workspace({
           }}
         />
       )}
-      {manualOpen && (
+      {(manualOpen || editingMovement) && (
         <ManualModal
           period={period}
-          onClose={() => setManualOpen(false)}
-          addManual={addManual}
+          movement={editingMovement}
+          onClose={() => {
+            setManualOpen(false);
+            setEditingMovement(null);
+          }}
+          onSubmit={
+            editingMovement
+              ? (form) => updateManual(editingMovement.id, form)
+              : addManual
+          }
         />
       )}
       {settingsOpen && (
@@ -1000,8 +1009,10 @@ function Review({
   ledger,
   totals,
   documents,
+  movements,
   excludedPendingCount,
   openManual,
+  onEditManual,
   goClose,
 }: {
   company: Company;
@@ -1009,8 +1020,10 @@ function Review({
   ledger: ReturnType<typeof buildLedger>;
   totals: ReturnType<typeof calculateTotals>;
   documents: RcvDocument[];
+  movements: CashMovement[];
   excludedPendingCount: number;
   openManual: () => void;
+  onEditManual: (movement: CashMovement) => void;
   goClose: () => void;
 }) {
   const [exportOpen, setExportOpen] = useState(false);
@@ -1122,26 +1135,44 @@ function Review({
                 <br />
                 <span>Base imponible</span>
               </th>
+              <th aria-label="Acciones" />
             </tr>
           </thead>
           <tbody>
-            {ledger.map((row) => (
-              <tr key={row.movementId}>
-                <td>{row.correlation}</td>
-                <td>
-                  <span className={`op-code op-${row.operationType}`}>
-                    {row.operationType}
-                  </span>
-                </td>
-                <td>{row.documentNumber || "—"}</td>
-                <td>{row.documentType}</td>
-                <td>{row.issuerRut || "—"}</td>
-                <td>{formatDate(row.occurredOn)}</td>
-                <td>{row.description}</td>
-                <td className="numeric">{clp.format(row.flowAmount)}</td>
-                <td className="numeric">{clp.format(row.taxableAmount)}</td>
-              </tr>
-            ))}
+            {ledger.map((row) => {
+              const movement = movements.find((m) => m.id === row.movementId);
+              const editable = movement?.source === "manual";
+              return (
+                <tr key={row.movementId}>
+                  <td>{row.correlation}</td>
+                  <td>
+                    <span className={`op-code op-${row.operationType}`}>
+                      {row.operationType}
+                    </span>
+                  </td>
+                  <td>{row.documentNumber || "—"}</td>
+                  <td>{row.documentType}</td>
+                  <td>{row.issuerRut || "—"}</td>
+                  <td>{formatDate(row.occurredOn)}</td>
+                  <td>{row.description}</td>
+                  <td className="numeric">{clp.format(row.flowAmount)}</td>
+                  <td className="numeric">{clp.format(row.taxableAmount)}</td>
+                  <td>
+                    {editable && (
+                      <button
+                        type="button"
+                        className="row-edit"
+                        aria-label={`Editar ${row.description}`}
+                        title="Editar movimiento manual"
+                        onClick={() => onEditManual(movement)}
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    )}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -1833,17 +1864,30 @@ function MapSelect({
 
 function ManualModal({
   period,
+  movement,
   onClose,
-  addManual,
+  onSubmit,
 }: {
   period: string;
+  movement?: CashMovement | null;
   onClose: () => void;
-  addManual: (form: FormData) => void | Promise<void>;
+  onSubmit: (form: FormData) => void | Promise<void>;
 }) {
-  const [amount, setAmount] = useState("");
-  const [category, setCategory] = useState<MovementCategory>("tax");
-  const [documentKind, setDocumentKind] = useState<ManualDocumentKind | "">("");
-  const [affectsIva, setAffectsIva] = useState(true);
+  const editing = Boolean(movement);
+  const [amount, setAmount] = useState(
+    movement ? String(Math.abs(movement.amount)) : "",
+  );
+  const [category, setCategory] = useState<MovementCategory>(
+    movement?.category ?? "tax",
+  );
+  const [documentKind, setDocumentKind] = useState<ManualDocumentKind | "">(
+    (Object.entries(manualDocumentKindLabels).find(
+      ([, label]) => label === movement?.documentType,
+    )?.[0] as ManualDocumentKind | undefined) ?? "",
+  );
+  const [affectsIva, setAffectsIva] = useState(
+    !movement || movement.taxableAmount !== Math.abs(movement.amount),
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const needsDocumentKind = category === "purchase" || category === "sale";
@@ -1858,14 +1902,18 @@ function ManualModal({
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div
-        className="modal-card compact"
+        className="modal-card"
         onMouseDown={(e) => e.stopPropagation()}
       >
         <div className="modal-header">
           <div>
             <p className="eyebrow">Flujo sin cartola</p>
-            <h2>Movimiento manual</h2>
-            <p>Agrega al libro pagos de IVA, PPM, saldos o cualquier flujo sin RCV.</p>
+            <h2>{editing ? "Editar movimiento" : "Movimiento manual"}</h2>
+            <p>
+              {editing
+                ? "Corrige el flujo, la cifra o cualquier otro dato del movimiento."
+                : "Agrega al libro pagos de IVA, PPM, saldos o cualquier flujo sin RCV."}
+            </p>
           </div>
           <button className="modal-close" onClick={onClose}>
             ×
@@ -1878,7 +1926,7 @@ function ManualModal({
             setError("");
             try {
               const formData = new FormData(e.currentTarget);
-              await addManual(formData);
+              await onSubmit(formData);
             } catch (err) {
               setError(
                 err instanceof Error
@@ -1889,20 +1937,23 @@ function ManualModal({
               setBusy(false);
             }
           }}
-          className="form-grid"
+          className="form-grid cols-3"
         >
           <label>
             Fecha
             <input
               type="date"
               name="date"
-              defaultValue={`${period}-20`}
+              defaultValue={movement?.occurredOn ?? `${period}-20`}
               required
             />
           </label>
           <label>
             Flujo
-            <select name="operationType">
+            <select
+              name="operationType"
+              defaultValue={movement ? (movement.amount < 0 ? "2" : "1") : "1"}
+            >
               <option value="1">Ingreso</option>
               <option value="2">Egreso</option>
             </select>
@@ -1971,6 +2022,7 @@ function ManualModal({
             <input
               name="description"
               required
+              defaultValue={movement?.description ?? ""}
               placeholder="Descripción clara del movimiento"
             />
           </label>
@@ -2014,7 +2066,11 @@ function ManualModal({
               disabled={busy || (needsDocumentKind && !documentKind)}
             >
               {busy ? <LoaderCircle className="spin" size={16} /> : null}{" "}
-              {busy ? "Guardando…" : "Guardar movimiento"}
+              {busy
+                ? "Guardando…"
+                : editing
+                  ? "Guardar cambios"
+                  : "Guardar movimiento"}
             </button>
           </div>
         </form>
@@ -2056,27 +2112,9 @@ function CompanySetupModal({
         );
         if (!credentialResponse.ok) throw new Error("credential failed");
       }
-      const accountName = String(form.get("accountName") ?? "").trim();
-      if (accountName) {
-      const accountResponse = await fetch(
-        `/api/companies/${company.id}/accounts`,
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            name: String(form.get("accountName")),
-            kind: "bank",
-            bank: String(form.get("bank")),
-            numberLast4: String(form.get("last4")),
-            openingBalance: Number(form.get("openingBalance")),
-          }),
-        },
-      );
-      if (!accountResponse.ok) throw new Error("save failed");
-      }
       onSaved();
     } catch {
-      setError("No se pudo guardar la configuración.");
+      setError("No se pudo guardar la clave SII.");
     } finally {
       setBusy(false);
     }
@@ -2090,7 +2128,7 @@ function CompanySetupModal({
         <div className="modal-header">
           <div>
             <p className="eyebrow">Configuración privada</p>
-            <h2>Conectar empresa al SII</h2>
+            <h2>Cambiar clave SII</h2>
             <p>La clave se cifra antes de guardarse y solo se usa para extraer el RCV.</p>
           </div>
           <button className="modal-close" onClick={onClose}>
@@ -2102,35 +2140,6 @@ function CompanySetupModal({
             Clave SII
             <input name="siiPassword" type="password" autoComplete="new-password" required={!hasSiiCredential} placeholder="Ingresa o reemplaza la clave SII" />
             <small>Déjala vacía para conservar la clave ya guardada.</small>
-          </label>
-          <label>
-            Banco <small>(opcional)</small>
-            <input name="bank" placeholder="Banco de Chile" />
-          </label>
-          <label>
-            Últimos 4 dígitos
-            <input
-              name="last4"
-              inputMode="numeric"
-              pattern="[0-9]{4}"
-              maxLength={4}
-              placeholder="4831"
-            />
-          </label>
-          <label className="span-2">
-            Nombre interno de la cuenta
-            <input
-              name="accountName"
-              placeholder="Cuenta corriente principal (opcional)"
-            />
-          </label>
-          <label className="span-2">
-            Saldo inicial
-            <input
-              name="openingBalance"
-              type="number"
-              defaultValue="0"
-            />
           </label>
           {error && <span className="login-error span-2">{error}</span>}
           <div className="modal-actions span-2">
@@ -2154,6 +2163,35 @@ function CompanySetupModal({
       </div>
     </div>
   );
+}
+
+function parseManualForm(form: FormData) {
+  const amount = Math.abs(Number(form.get("amount") ?? 0));
+  const operationType = Number(form.get("operationType")) as 1 | 2;
+  const category = String(form.get("category")) as MovementCategory;
+  const documentKind = String(form.get("documentKind") ?? "") as
+    | ManualDocumentKind
+    | "";
+  const affectsIva = form.get("affectsIva") !== "no";
+  // Base imponible según reglas del contador (INGRESO_MANUAL.pdf): solo
+  // compras/ventas con documento tributario generan base; el resto es $0.
+  const taxableAmount = manualTaxableAmount(
+    category,
+    documentKind,
+    amount,
+    affectsIva,
+  );
+  return {
+    operationType,
+    category,
+    occurredOn: String(form.get("date")),
+    description: String(form.get("description")),
+    amount: operationType === 2 ? -amount : amount,
+    taxableAmount,
+    documentType: documentKind
+      ? manualDocumentKindLabels[documentKind]
+      : undefined,
+  };
 }
 
 async function persistMovements(companyId: string, movements: CashMovement[]) {
