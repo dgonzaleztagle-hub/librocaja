@@ -344,7 +344,10 @@ export function Workspace({
           forceReason,
         }),
       });
-      if (!response.ok) throw new Error("No se pudo cerrar el período");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "No se pudo cerrar el período");
+      }
       const result = await response.json();
       setClosureVersion(Number(result.version));
     } else {
@@ -1282,9 +1285,11 @@ function CloseStage({
         !validation.canClose,
         validation.canClose ? undefined : forceReason.trim(),
       );
-    } catch {
+    } catch (err) {
       setCloseError(
-        "No se pudo cerrar el período. Revisa la conexión e inténtalo nuevamente.",
+        err instanceof Error
+          ? err.message
+          : "No se pudo cerrar el período. Revisa la conexión e inténtalo nuevamente.",
       );
     } finally {
       setClosing(false);

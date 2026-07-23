@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import { requireUser, createClient } from "@/lib/supabase/server";
+import { periodLabel } from "@/lib/format";
 
 const schema = z
   .object({
@@ -31,6 +32,31 @@ export async function POST(request: Request) {
     if (previous?.status === "closed")
       return NextResponse.json(
         { error: "El período ya está cerrado" },
+        { status: 409 },
+      );
+    // El saldo inicial de cada período se traspasa del cierre del anterior.
+    // Cerrar este período mientras uno posterior ya está cerrado dejaría el
+    // saldo inicial de ese posterior congelado y desactualizado para
+    // siempre, así que se exige cerrar en orden cronológico.
+    const { data: laterRows } = await supabase
+      .from("period_closures")
+      .select("period,status")
+      .eq("company_id", input.companyId)
+      .gt("period", input.period)
+      .order("period", { ascending: true })
+      .order("version", { ascending: false });
+    const latestStatusByPeriod = new Map<string, string>();
+    for (const row of laterRows ?? [])
+      if (!latestStatusByPeriod.has(row.period))
+        latestStatusByPeriod.set(row.period, row.status);
+    const closedLaterPeriod = [...latestStatusByPeriod.entries()].find(
+      ([, status]) => status === "closed",
+    )?.[0];
+    if (closedLaterPeriod)
+      return NextResponse.json(
+        {
+          error: `No puedes cerrar este período porque ${periodLabel(closedLaterPeriod)} ya está cerrado. Reábrelo primero, luego cierra en orden.`,
+        },
         { status: 409 },
       );
     const version = Number(previous?.version ?? 0) + 1;
