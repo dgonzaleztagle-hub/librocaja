@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useMemo, useRef, useState, type RefObject } from "react";
 import {
   AlertCircle,
   ArrowDownLeft,
@@ -105,12 +105,24 @@ export function Workspace({
   // router.refresh() sin cambiar de ruta (misma empresa/período) no lo vuelve
   // a aplicar por sí solo, así que la sincronización RCV y la importación de
   // CSV podían "terminar bien" sin que la tabla se actualizara en pantalla.
-  useEffect(() => setMovements(initialMovements), [initialMovements]);
-  useEffect(() => setDocuments(initialDocuments), [initialDocuments]);
-  useEffect(() => {
+  // Se ajusta durante el render (no en un efecto) siguiendo el patrón de
+  // React para derivar estado desde props que cambian.
+  const [prevInitialMovements, setPrevInitialMovements] = useState(initialMovements);
+  if (initialMovements !== prevInitialMovements) {
+    setPrevInitialMovements(initialMovements);
+    setMovements(initialMovements);
+  }
+  const [prevInitialDocuments, setPrevInitialDocuments] = useState(initialDocuments);
+  if (initialDocuments !== prevInitialDocuments) {
+    setPrevInitialDocuments(initialDocuments);
+    setDocuments(initialDocuments);
+  }
+  const [prevInitialClosure, setPrevInitialClosure] = useState(initialClosure);
+  if (initialClosure !== prevInitialClosure) {
+    setPrevInitialClosure(initialClosure);
     setPeriodClosed(initialClosure.closed);
     setClosureVersion(initialClosure.version);
-  }, [initialClosure]);
+  }
   const ledger = useMemo(
     () => buildCompleteLedger(company, documents, movements),
     [company, documents, movements],
@@ -326,10 +338,6 @@ export function Workspace({
   }
 
   async function addManual(form: FormData) {
-    if (!company.accounts.length)
-      throw new Error(
-        "Esta empresa no tiene cuentas configuradas. Agrega una cuenta antes de registrar movimientos manuales.",
-      );
     const amount = Math.abs(Number(form.get("amount") ?? 0));
     const operationType = Number(form.get("operationType")) as 1 | 2;
     const category = String(form.get("category")) as MovementCategory;
@@ -349,7 +357,10 @@ export function Workspace({
     const movement: CashMovement = {
       id: crypto.randomUUID(),
       companyId: company.id,
-      accountId: String(form.get("accountId")),
+      // Un movimiento manual es solo flujo del libro, no una conciliación
+      // bancaria: no se pide ni depende de ninguna cuenta. El servidor
+      // resuelve una cuenta de caja implícita al guardar.
+      accountId: "",
       period,
       operationType,
       occurredOn: date,
@@ -368,6 +379,7 @@ export function Workspace({
       await persistMovements(company.id, [movement]);
     setMovements((items) => [...items, movement]);
     setManualOpen(false);
+    router.refresh();
   }
 
   const filteredMovements = movements.filter(
@@ -812,7 +824,6 @@ export function Workspace({
       )}
       {manualOpen && (
         <ManualModal
-          company={company}
           period={period}
           onClose={() => setManualOpen(false)}
           addManual={addManual}
@@ -1821,12 +1832,10 @@ function MapSelect({
 }
 
 function ManualModal({
-  company,
   period,
   onClose,
   addManual,
 }: {
-  company: Company;
   period: string;
   onClose: () => void;
   addManual: (form: FormData) => void | Promise<void>;
@@ -1846,7 +1855,6 @@ function ManualModal({
     Number(amount) || 0,
     affectsIva,
   );
-  const noAccounts = (company.accounts ?? []).length === 0;
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div
@@ -1891,20 +1899,6 @@ function ManualModal({
               defaultValue={`${period}-20`}
               required
             />
-          </label>
-          <label>
-            Cuenta
-            <select name="accountId" disabled={noAccounts}>
-              {noAccounts ? (
-                <option value="">Sin cuentas configuradas</option>
-              ) : (
-                (company.accounts ?? []).map((a) => (
-                  <option value={a.id} key={a.id}>
-                    {a.name}
-                  </option>
-                ))
-              )}
-            </select>
           </label>
           <label>
             Flujo
@@ -2005,12 +1999,6 @@ function ManualModal({
                 : "Este flujo no genera base imponible."}
             </small>
           </label>
-          {noAccounts && (
-            <p className="form-error span-2" role="alert">
-              Esta empresa no tiene cuentas configuradas. Ve a &quot;Configurar
-              SII y cuentas&quot; antes de registrar movimientos manuales.
-            </p>
-          )}
           {error && <span className="login-error span-2">{error}</span>}
           <div className="modal-actions span-2">
             <button
@@ -2023,9 +2011,7 @@ function ManualModal({
             </button>
             <button
               className="button primary"
-              disabled={
-                busy || noAccounts || (needsDocumentKind && !documentKind)
-              }
+              disabled={busy || (needsDocumentKind && !documentKind)}
             >
               {busy ? <LoaderCircle className="spin" size={16} /> : null}{" "}
               {busy ? "Guardando…" : "Guardar movimiento"}
@@ -2172,7 +2158,7 @@ function CompanySetupModal({
 
 async function persistMovements(companyId: string, movements: CashMovement[]) {
   const rows = movements.map((movement) => ({
-    accountId: movement.accountId,
+    accountId: movement.accountId || undefined,
     period: movement.period,
     operationType: movement.operationType,
     occurredOn: movement.occurredOn,
