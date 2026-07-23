@@ -45,8 +45,11 @@ import {
   buildLedger,
   buildCompleteLedger,
   calculateTotals,
+  manualDocumentKindLabels,
+  manualTaxableAmount,
   suggestedTaxableAmount,
   validateClose,
+  type ManualDocumentKind,
 } from "@/lib/ledger";
 import type {
   CashMovement,
@@ -323,21 +326,26 @@ export function Workspace({
   }
 
   async function addManual(form: FormData) {
+    if (!company.accounts.length)
+      throw new Error(
+        "Esta empresa no tiene cuentas configuradas. Agrega una cuenta antes de registrar movimientos manuales.",
+      );
     const amount = Math.abs(Number(form.get("amount") ?? 0));
     const operationType = Number(form.get("operationType")) as 1 | 2;
     const category = String(form.get("category")) as MovementCategory;
     const date = String(form.get("date"));
-    // La base imponible no se pide al usuario: se calcula desde el monto
-    // bruto ingresado (IVA 19%), salvo flujos que nunca son base imponible.
-    const nonTaxableCategories: MovementCategory[] = [
-      "loan",
-      "capital_contribution",
-      "owner_withdrawal",
-      "internal_transfer",
-    ];
-    const taxableAmount = nonTaxableCategories.includes(category)
-      ? 0
-      : Math.round(amount / 1.19);
+    const documentKind = String(form.get("documentKind") ?? "") as
+      | ManualDocumentKind
+      | "";
+    const affectsIva = form.get("affectsIva") !== "no";
+    // Base imponible según reglas del contador (INGRESO_MANUAL.pdf): solo
+    // compras/ventas con documento tributario generan base; el resto es $0.
+    const taxableAmount = manualTaxableAmount(
+      category,
+      documentKind,
+      amount,
+      affectsIva,
+    );
     const movement: CashMovement = {
       id: crypto.randomUUID(),
       companyId: company.id,
@@ -349,6 +357,9 @@ export function Workspace({
       amount: operationType === 2 ? -amount : amount,
       taxableAmount,
       category,
+      documentType: documentKind
+        ? manualDocumentKindLabels[documentKind]
+        : undefined,
       source: "manual",
       reconciled: true,
       createdOrder: `z-${Date.now()}`,
@@ -1821,9 +1832,21 @@ function ManualModal({
   addManual: (form: FormData) => void | Promise<void>;
 }) {
   const [amount, setAmount] = useState("");
+  const [category, setCategory] = useState<MovementCategory>("tax");
+  const [documentKind, setDocumentKind] = useState<ManualDocumentKind | "">("");
+  const [affectsIva, setAffectsIva] = useState(true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const previewTaxable = Math.round((Number(amount) || 0) / 1.19);
+  const needsDocumentKind = category === "purchase" || category === "sale";
+  const needsIvaToggle =
+    needsDocumentKind && category === "sale" && documentKind === "sin_documento";
+  const previewTaxable = manualTaxableAmount(
+    category,
+    documentKind,
+    Number(amount) || 0,
+    affectsIva,
+  );
+  const noAccounts = (company.accounts ?? []).length === 0;
   return (
     <div className="modal-backdrop" onMouseDown={onClose}>
       <div
@@ -1871,8 +1894,8 @@ function ManualModal({
           </label>
           <label>
             Cuenta
-            <select name="accountId">
-              {(company.accounts ?? []).length === 0 ? (
+            <select name="accountId" disabled={noAccounts}>
+              {noAccounts ? (
                 <option value="">Sin cuentas configuradas</option>
               ) : (
                 (company.accounts ?? []).map((a) => (
@@ -1892,19 +1915,63 @@ function ManualModal({
           </label>
           <label>
             Categoría
-            <select name="category">
-              <option value="tax">Pago de IVA</option>
-              <option value="tax">Pago de PPM</option>
-              <option value="other">Saldo o ajuste de caja</option>
-              <option value="other">Otro flujo</option>
+            <select
+              name="category"
+              value={category}
+              onChange={(e) => {
+                setCategory(e.target.value as MovementCategory);
+                setDocumentKind("");
+              }}
+            >
+              <option value="purchase">Compra</option>
+              <option value="sale">Venta manual (excepcional, no SII)</option>
+              <option value="tax">Pago de impuestos (IVA / PPM)</option>
+              <option value="payroll">Remuneraciones o cotizaciones</option>
               <option value="loan">Préstamo</option>
               <option value="capital_contribution">Aporte de capital</option>
               <option value="owner_withdrawal">Retiro del propietario</option>
-              <option value="tax">Impuesto</option>
-              <option value="payroll">Remuneraciones</option>
+              <option value="internal_transfer">
+                Depósito o giro entre cuentas propias
+              </option>
               <option value="refund">Devolución</option>
+              <option value="other">Ajuste de caja u otro</option>
             </select>
           </label>
+          {needsDocumentKind && (
+            <label className="span-2">
+              ¿Corresponde a un documento tributario?
+              <select
+                name="documentKind"
+                value={documentKind}
+                onChange={(e) =>
+                  setDocumentKind(e.target.value as ManualDocumentKind)
+                }
+                required
+              >
+                <option value="" disabled>
+                  Selecciona una opción
+                </option>
+                {Object.entries(manualDocumentKindLabels).map(([value, label]) => (
+                  <option value={value} key={value}>
+                    {label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          {needsIvaToggle && (
+            <label className="span-2">
+              ¿Afecta IVA?
+              <select
+                name="affectsIva"
+                value={affectsIva ? "yes" : "no"}
+                onChange={(e) => setAffectsIva(e.target.value === "yes")}
+              >
+                <option value="yes">Sí</option>
+                <option value="no">No</option>
+              </select>
+            </label>
+          )}
           <label className="span-2">
             Glosa
             <input
@@ -1932,8 +1999,18 @@ function ManualModal({
               disabled
               value={clp.format(previewTaxable)}
             />
-            <small>Se calcula solo: monto total ÷ 1,19.</small>
+            <small>
+              {needsDocumentKind
+                ? "Se calcula sola según el tipo de documento."
+                : "Este flujo no genera base imponible."}
+            </small>
           </label>
+          {noAccounts && (
+            <p className="form-error span-2" role="alert">
+              Esta empresa no tiene cuentas configuradas. Ve a &quot;Configurar
+              SII y cuentas&quot; antes de registrar movimientos manuales.
+            </p>
+          )}
           {error && <span className="login-error span-2">{error}</span>}
           <div className="modal-actions span-2">
             <button
@@ -1944,7 +2021,12 @@ function ManualModal({
             >
               Cancelar
             </button>
-            <button className="button primary" disabled={busy}>
+            <button
+              className="button primary"
+              disabled={
+                busy || noAccounts || (needsDocumentKind && !documentKind)
+              }
+            >
               {busy ? <LoaderCircle className="spin" size={16} /> : null}{" "}
               {busy ? "Guardando…" : "Guardar movimiento"}
             </button>
@@ -2099,6 +2181,7 @@ async function persistMovements(companyId: string, movements: CashMovement[]) {
     amount: movement.amount,
     taxableAmount: movement.taxableAmount,
     category: movement.category,
+    documentType: movement.documentType,
     source: movement.source,
     reconciled: movement.reconciled,
     issuerRut: movement.issuerRut,

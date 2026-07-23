@@ -5,6 +5,7 @@ import type {
   DailySummaryRow,
   LedgerRow,
   LedgerTotals,
+  MovementCategory,
   RcvDocument,
 } from "./types";
 
@@ -145,4 +146,63 @@ export function suggestedTaxableAmount(movement: CashMovement, document?: RcvDoc
   if (!document) return Math.abs(movement.amount);
   const paidRatio = Math.min(1, Math.abs(movement.amount) / Math.max(1, document.totalAmount));
   return Math.round((document.netAmount + document.exemptAmount) * paidRatio);
+}
+
+/** Reglas de base imponible para el ingreso manual, según el contador (ver INGRESO_MANUAL.pdf). */
+export type ManualDocumentKind =
+  | "factura_afecta"
+  | "factura_exenta"
+  | "factura_compra"
+  | "boleta_honorarios"
+  | "boleta_afecta"
+  | "boleta_exenta"
+  | "nota_credito"
+  | "nota_debito"
+  | "sin_documento";
+
+export const manualDocumentKindLabels: Record<ManualDocumentKind, string> = {
+  factura_afecta: "Factura afecta",
+  factura_exenta: "Factura exenta",
+  factura_compra: "Factura de compra",
+  boleta_honorarios: "Boleta de honorarios",
+  boleta_afecta: "Boleta afecta",
+  boleta_exenta: "Boleta exenta",
+  nota_credito: "Nota de crédito",
+  nota_debito: "Nota de débito",
+  sin_documento: "Sin documento tributario",
+};
+
+/**
+ * Solo "purchase" y "sale" llevan documento tributario; el resto (pago de
+ * impuestos, remuneraciones, préstamos, aportes, retiros, transferencias
+ * internas, devoluciones, ajustes) nunca genera base imponible.
+ */
+export function manualTaxableAmount(
+  category: MovementCategory,
+  documentKind: ManualDocumentKind | "",
+  amount: number,
+  affectsIva: boolean,
+): number {
+  if (category !== "purchase" && category !== "sale") return 0;
+  switch (documentKind) {
+    case "factura_afecta":
+    case "factura_compra":
+    case "boleta_afecta":
+    case "nota_credito":
+    case "nota_debito":
+      return Math.round(amount / 1.19);
+    case "factura_exenta":
+    case "boleta_exenta":
+    case "boleta_honorarios":
+      // Exentas: la base es el propio total. Honorarios: la retención es
+      // Impuesto a la Renta, no IVA, así que el bruto también es la base.
+      return amount;
+    case "sin_documento":
+      // Compra sin documento (menor, sin boleta): no genera base.
+      // Venta manual excepcional: depende de si el monto declarado afecta IVA.
+      if (category === "purchase") return 0;
+      return affectsIva ? Math.round(amount / 1.19) : amount;
+    default:
+      return 0;
+  }
 }
