@@ -17,9 +17,19 @@ export async function DELETE(
       .eq("id", id);
     if (error) throw error;
     return NextResponse.json({ ok: true });
-  } catch {
+  } catch (error) {
+    // cash_movements.account_id y allocations.document_id son ON DELETE
+    // RESTRICT (ver supabase/migrations/001_initial.sql): una empresa con
+    // movimientos o conciliaciones reales nunca se puede borrar hasta que
+    // el esquema permita cascada ahí. Se avisa en vez de un genérico mudo.
+    const code = (error as { code?: string } | null)?.code;
     return NextResponse.json(
-      { error: "No se pudo eliminar la empresa" },
+      {
+        error:
+          code === "23503"
+            ? "No se puede eliminar: esta empresa ya tiene movimientos o conciliaciones registradas."
+            : "No se pudo eliminar la empresa",
+      },
       { status: 400 },
     );
   }

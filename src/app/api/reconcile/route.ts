@@ -84,7 +84,8 @@ export async function POST(request: Request) {
         }),
     ]);
     return NextResponse.json({ success: true, documentStatus: nextStatus });
-  } catch {
+  } catch (error) {
+    console.error("Error guardando conciliación:", error);
     return NextResponse.json(
       { error: "No se pudo guardar la conciliación" },
       { status: 400 },

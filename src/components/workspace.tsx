@@ -292,7 +292,10 @@ export function Workspace({
               : document.counterpartyRut,
         }),
       });
-      if (!response.ok) return;
+      if (!response.ok) {
+        console.error("Error guardando conciliación:", await response.text());
+        return;
+      }
     }
     setMovements((items) =>
       items.map((item) =>
@@ -363,7 +366,10 @@ export function Workspace({
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ companyId: company.id, period, reason }),
       });
-      if (!response.ok) throw new Error("No se pudo reabrir el período");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "No se pudo reabrir el período");
+      }
     }
     setPeriodClosed(false);
   }
@@ -802,6 +808,7 @@ export function Workspace({
           totals={totals}
           documents={documents}
           movements={movements}
+          openingBalance={openingBalance}
           excludedPendingCount={pendingCount}
           openManual={() => setManualOpen(true)}
           onEditManual={(movement) => setEditingMovement(movement)}
@@ -1041,6 +1048,7 @@ function Review({
   totals,
   documents,
   movements,
+  openingBalance,
   excludedPendingCount,
   openManual,
   onEditManual,
@@ -1052,6 +1060,7 @@ function Review({
   totals: ReturnType<typeof calculateTotals>;
   documents: RcvDocument[];
   movements: CashMovement[];
+  openingBalance: number;
   excludedPendingCount: number;
   openManual: () => void;
   onEditManual: (movement: CashMovement) => void;
@@ -1080,7 +1089,7 @@ function Review({
               >
                 Excel completo
               </button>
-              <button onClick={() => { exportPdf(company, period, ledger); setExportOpen(false); }}>
+              <button onClick={() => { exportPdf(company, period, ledger, openingBalance); setExportOpen(false); }}>
                 PDF detallado
               </button>
               <button onClick={() => { exportCsv(company, period, ledger); setExportOpen(false); }}>
@@ -1340,7 +1349,7 @@ function CloseStage({
           <button
             className="button primary"
             onClick={() =>
-              exportPdf(company, period, ledger, version, "CERRADO")
+              exportPdf(company, period, ledger, openingBalance, version, "CERRADO")
             }
           >
             Descargar PDF firmado
@@ -1362,8 +1371,12 @@ function CloseStage({
             setCloseError("");
             try {
               await onReopen(reopenReason.trim());
-            } catch {
-              setCloseError("No se pudo reabrir el período.");
+            } catch (err) {
+              setCloseError(
+                err instanceof Error
+                  ? err.message
+                  : "No se pudo reabrir el período.",
+              );
             } finally {
               setClosing(false);
             }
@@ -2151,11 +2164,16 @@ function CompanySetupModal({
             body: JSON.stringify({ password }),
           },
         );
-        if (!credentialResponse.ok) throw new Error("credential failed");
+        if (!credentialResponse.ok) {
+          const body = await credentialResponse.json().catch(() => ({}));
+          throw new Error(body.error ?? "No se pudo guardar la clave SII.");
+        }
       }
       onSaved();
-    } catch {
-      setError("No se pudo guardar la clave SII.");
+    } catch (err) {
+      setError(
+        err instanceof Error ? err.message : "No se pudo guardar la clave SII.",
+      );
     } finally {
       setBusy(false);
     }

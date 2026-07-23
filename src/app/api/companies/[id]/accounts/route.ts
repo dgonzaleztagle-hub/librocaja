@@ -11,7 +11,8 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     const { data, error } = await supabase.from("cash_accounts").insert({ company_id: id, name: input.name, kind: input.kind, bank: input.bank || null, number_last4: input.numberLast4 || null, opening_balance: input.openingBalance }).select().single();
     if (error) throw error;
     return NextResponse.json({ success: true, account: data }, { status: 201 });
-  } catch {
+  } catch (error) {
+    console.error("Error creando cuenta:", error);
     return NextResponse.json({ error: "No se pudo crear la cuenta" }, { status: 400 });
   }
 }

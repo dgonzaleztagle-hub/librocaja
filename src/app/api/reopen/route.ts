@@ -43,7 +43,8 @@ export async function POST(request: Request) {
       after_data: { status: "in_review", version: closure.version },
     });
     return NextResponse.json({ success: true, version: closure.version });
-  } catch {
+  } catch (error) {
+    console.error("Error reabriendo período:", error);
     return NextResponse.json(
       { error: "No se pudo reabrir el período" },
       { status: 400 },

@@ -481,6 +481,7 @@ export function exportPdf(
   company: Company,
   period: string,
   rows: LedgerRow[],
+  openingBalance: number,
   version = 1,
   status = "BORRADOR",
 ) {
@@ -494,10 +495,6 @@ export function exportPdf(
     `${company.name} · ${company.rut} · Período ${period} · ${status} · Versión ${version} · Generado ${new Date().toLocaleString("es-CL")}`,
     14,
     21,
-  );
-  const openingBalance = company.accounts.reduce(
-    (sum, account) => sum + account.openingBalance,
-    0,
   );
   autoTable(pdf, {
     startY: 27,

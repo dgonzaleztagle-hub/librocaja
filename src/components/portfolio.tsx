@@ -92,13 +92,20 @@ export function Portfolio({
       const response = await fetch(`/api/companies/${companyToDelete.id}`, {
         method: "DELETE",
       });
-      if (!response.ok) throw new Error("delete failed");
+      if (!response.ok) {
+        const body = await response.json().catch(() => ({}));
+        throw new Error(body.error ?? "delete failed");
+      }
       setCompanies((current) =>
         current.filter((company) => company.id !== companyToDelete.id),
       );
       setCompanyToDelete(null);
-    } catch {
-      setDeleteError("No se pudo eliminar. Intenta nuevamente.");
+    } catch (error) {
+      setDeleteError(
+        error instanceof Error
+          ? error.message
+          : "No se pudo eliminar. Intenta nuevamente.",
+      );
     } finally {
       setDeleting(false);
     }

@@ -12,7 +12,10 @@ describe("libro de caja", () => {
   it("ordena cronológicamente, enumera correlativos y calcula C10-C15", () => {
     const ledger = buildLedger([...movements].reverse());
     expect(ledger.map((row) => row.correlation)).toEqual([1, 2, 3]);
-    expect(calculateTotals(ledger)).toEqual({ incomeFlow: 2190, expenseFlow: 595, cashBalance: 1595, taxableIncome: 1000, taxableExpense: 500, netResult: 500 });
+    // El saldo inicial (operationType 0) aparece como primera línea del
+    // libro pero no debe sumarse en C10-C15: eso ya lo hace closePeriod()
+    // por separado para sacar el saldo de cierre (saldo inicial + flujo).
+    expect(calculateTotals(ledger)).toEqual({ incomeFlow: 1190, expenseFlow: 595, cashBalance: 595, taxableIncome: 1000, taxableExpense: 500, netResult: 500 });
   });
 
   it("resume por fecha y tipo de operación sin mezclar ingresos y egresos", () => {

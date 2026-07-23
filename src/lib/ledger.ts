@@ -79,10 +79,15 @@ function sourceDocumentLabel(movement: CashMovement) {
 }
 
 export function calculateTotals(rows: LedgerRow[]): LedgerTotals {
-  const incomeFlow = sum(rows.filter((row) => row.operationType !== 2), "flowAmount");
-  const expenseFlow = sum(rows.filter((row) => row.operationType === 2), "flowAmount");
-  const taxableIncome = sum(rows.filter((row) => row.operationType === 1), "taxableAmount");
-  const taxableExpense = sum(rows.filter((row) => row.operationType === 2), "taxableAmount");
+  // operationType 0 es el saldo inicial traspasado (ver Workspace): se
+  // muestra como primera línea del libro pero nunca es "ingreso" del
+  // período — sumarlo aquí infla C10 y duplica el saldo en closePeriod(),
+  // que ya suma el saldo inicial por su cuenta para sacar C12/cierre.
+  const flowRows = rows.filter((row) => row.operationType !== 0);
+  const incomeFlow = sum(flowRows.filter((row) => row.operationType !== 2), "flowAmount");
+  const expenseFlow = sum(flowRows.filter((row) => row.operationType === 2), "flowAmount");
+  const taxableIncome = sum(flowRows.filter((row) => row.operationType === 1), "taxableAmount");
+  const taxableExpense = sum(flowRows.filter((row) => row.operationType === 2), "taxableAmount");
   return {
     incomeFlow,
     expenseFlow,
