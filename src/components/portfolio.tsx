@@ -22,6 +22,8 @@ export function Portfolio({
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
   const [companies, setCompanies] = useState(initialCompanies);
   const [companyToDelete, setCompanyToDelete] = useState<Company | null>(null);
   const [deleting, setDeleting] = useState(false);
@@ -40,23 +42,44 @@ export function Portfolio({
     const name = String(formData.get("name") ?? "").trim();
     const rut = String(formData.get("rut") ?? "").trim();
     if (!name || !rut) return;
+    const siiPassword = String(formData.get("siiPassword") ?? "").trim();
     const draft = {
       name,
       rut,
       regime: String(formData.get("regime")) as Company["regime"],
     };
+    setCreateError("");
+    setCreating(true);
     try {
       const response = await fetch("/api/companies", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify(draft),
       });
-      if (!response.ok) throw new Error("create failed");
+      if (!response.ok) throw new Error("No se pudo crear la empresa.");
       const { company } = await response.json();
+      if (siiPassword) {
+        const credentialResponse = await fetch(
+          `/api/companies/${company.id}/credentials`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ password: siiPassword }),
+          },
+        );
+        // La empresa ya quedó creada aunque falle guardar la clave; se puede
+        // configurar después desde "Configurar SII y cuentas".
+        company.hasSiiCredential = credentialResponse.ok;
+      }
       setCompanies((current) => [...current, company]);
       router.push(`/empresa/${company.id}/${company.currentPeriod}`);
-    } catch {
+    } catch (error) {
+      setCreateError(
+        error instanceof Error ? error.message : "No se pudo crear la empresa.",
+      );
       return;
+    } finally {
+      setCreating(false);
     }
     setDialogOpen(false);
   }
@@ -246,7 +269,7 @@ export function Portfolio({
               <div>
                 <p className="eyebrow">Nueva empresa</p>
                 <h2 id="new-company">Agregar empresa</h2>
-                <p>Al crearla irás directo a guardar la clave SII y extraer el RCV.</p>
+                <p>La clave SII se cifra antes de guardarse; puedes dejarla en blanco y configurarla después.</p>
               </div>
               <button
                 className="modal-close"
@@ -274,15 +297,30 @@ export function Portfolio({
                 </select>
                 <ChevronDown size={15} />
               </label>
+              <label>
+                Clave SII <small>(opcional, para extraer el RCV automático)</small>
+                <input
+                  name="siiPassword"
+                  type="password"
+                  autoComplete="new-password"
+                  placeholder="Clave del portal SII"
+                />
+              </label>
+              {createError && (
+                <span className="login-error">{createError}</span>
+              )}
               <div className="modal-actions">
                 <button
                   type="button"
                   className="button secondary"
+                  disabled={creating}
                   onClick={() => setDialogOpen(false)}
                 >
                   Cancelar
                 </button>
-                <button className="button primary">Crear empresa</button>
+                <button className="button primary" disabled={creating}>
+                  {creating ? "Creando…" : "Crear empresa"}
+                </button>
               </div>
             </form>
           </div>
