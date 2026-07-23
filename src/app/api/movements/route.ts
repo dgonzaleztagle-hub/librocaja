@@ -60,7 +60,7 @@ export async function POST(request: Request) {
       {
         error:
           error instanceof z.ZodError
-            ? "Solicitud inválida: " + error.errors.map((e) => e.message).join(", ")
+            ? "Solicitud inválida: " + error.issues.map((e) => e.message).join(", ")
             : "No se pudieron guardar los movimientos",
       },
       { status: 400 },
