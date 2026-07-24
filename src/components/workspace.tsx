@@ -1481,8 +1481,8 @@ function CloseStage({
               <dd>−{clp.format(totals.expenseFlow)}</dd>
             </div>
             <div className="total">
-              <dt>Saldo de caja</dt>
-              <dd>{clp.format(totals.cashBalance)}</dd>
+              <dt>Saldo de caja final</dt>
+              <dd>{clp.format(openingBalance + totals.cashBalance)}</dd>
             </div>
           </dl>
           {!validation.canClose && (

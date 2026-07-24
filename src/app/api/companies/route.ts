@@ -6,6 +6,7 @@ const schema = z.object({
   name: z.string().trim().min(2).max(160),
   rut: z.string().trim().min(8).max(14),
   regime: z.enum(["transparent", "general_simplified"]),
+  openingBalance: z.number().int().default(0),
 });
 
 export async function POST(request: Request) {
@@ -48,6 +49,16 @@ export async function POST(request: Request) {
       .select()
       .single();
     if (error) throw error;
+    // Único momento en que se pide el saldo inicial: al crear la empresa.
+    // Se guarda en la cuenta de caja implícita (misma que usan los
+    // movimientos manuales) para no volver a pedirlo nunca más.
+    const { error: accountError } = await supabase.from("cash_accounts").insert({
+      company_id: data.id,
+      name: "Caja",
+      kind: "cash",
+      opening_balance: body.openingBalance,
+    });
+    if (accountError) throw accountError;
     return NextResponse.json(
       {
         company: {

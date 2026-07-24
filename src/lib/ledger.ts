@@ -158,7 +158,8 @@ export type ManualDocumentKind =
   | "factura_afecta"
   | "factura_exenta"
   | "factura_compra"
-  | "boleta_honorarios"
+  | "boleta_honorarios_exenta"
+  | "boleta_honorarios_afecta"
   | "boleta_afecta"
   | "boleta_exenta"
   | "nota_credito"
@@ -169,13 +170,22 @@ export const manualDocumentKindLabels: Record<ManualDocumentKind, string> = {
   factura_afecta: "Factura afecta",
   factura_exenta: "Factura exenta",
   factura_compra: "Factura de compra",
-  boleta_honorarios: "Boleta de honorarios",
+  boleta_honorarios_exenta: "Boleta de honorarios exenta",
+  boleta_honorarios_afecta: "Boleta de honorarios afecta",
   boleta_afecta: "Boleta afecta",
   boleta_exenta: "Boleta exenta",
   nota_credito: "Nota de crédito",
   nota_debito: "Nota de débito",
   sin_documento: "Sin documento tributario",
 };
+
+/**
+ * Tasa de retención de boletas de honorarios: sube por ley (21.133) cada
+ * 1 de enero hasta llegar a 17% en 2028. Hay que actualizar este valor cada
+ * año — 2026: 15,25% (antes 14,5% en 2025).
+ * https://www.sii.cl/destacados/boletas_honorarios/
+ */
+export const BOLETA_HONORARIOS_RETENTION_RATE = 0.1525;
 
 /**
  * Solo "purchase" y "sale" llevan documento tributario; el resto (pago de
@@ -198,10 +208,13 @@ export function manualTaxableAmount(
       return Math.round(amount / 1.19);
     case "factura_exenta":
     case "boleta_exenta":
-    case "boleta_honorarios":
-      // Exentas: la base es el propio total. Honorarios: la retención es
-      // Impuesto a la Renta, no IVA, así que el bruto también es la base.
+    case "boleta_honorarios_exenta":
+      // Sin retención: el monto ingresado ya es la base.
       return amount;
+    case "boleta_honorarios_afecta":
+      // El monto ingresado es el líquido recibido (ya con la retención
+      // descontada); para sacar la base (el bruto) hay que revertirla.
+      return Math.round(amount / (1 - BOLETA_HONORARIOS_RETENTION_RATE));
     case "sin_documento":
       // Compra sin documento (menor, sin boleta): no genera base.
       // Venta manual excepcional: depende de si el monto declarado afecta IVA.

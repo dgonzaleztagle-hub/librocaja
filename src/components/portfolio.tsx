@@ -47,6 +47,7 @@ export function Portfolio({
       name,
       rut,
       regime: String(formData.get("regime")) as Company["regime"],
+      openingBalance: Math.round(Number(formData.get("openingBalance") ?? 0)),
     };
     setCreateError("");
     setCreating(true);
@@ -68,7 +69,7 @@ export function Portfolio({
           },
         );
         // La empresa ya quedó creada aunque falle guardar la clave; se puede
-        // configurar después desde "Configurar SII y cuentas".
+        // configurar después desde "Cambiar clave SII".
         company.hasSiiCredential = credentialResponse.ok;
       }
       setCompanies((current) => [...current, company]);
@@ -303,6 +304,15 @@ export function Portfolio({
                   </option>
                 </select>
                 <ChevronDown size={15} />
+              </label>
+              <label>
+                Saldo inicial de caja
+                <input
+                  name="openingBalance"
+                  type="number"
+                  defaultValue="0"
+                />
+                <small>Solo se pide aquí, al crear la empresa. Los meses siguientes se traspasa solo.</small>
               </label>
               <label>
                 Clave SII <small>(opcional, para extraer el RCV automático)</small>
